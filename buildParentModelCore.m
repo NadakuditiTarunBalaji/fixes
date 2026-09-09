@@ -466,6 +466,29 @@ try
             end
         end
 
+        % FIX: DEFINITION OF uniqueOutputKeyList FOR DUP OUTPUT WARN & GLOBAL PORT CREATION
+        allOutputKeys = {};
+        for modelIndex = 1:numModels
+            allOutputKeys = [allOutputKeys; modelOutputKeys{modelIndex}]; %#ok<AGROW>
+        end
+        uniqueOutputKeyList = unique(allOutputKeys);
+
+        for keyIndex = 1:numel(uniqueOutputKeyList)
+            key = uniqueOutputKeyList{keyIndex};
+            producerCount = 0;
+            for modelIndex = 1:numModels
+                if any(strcmp(modelOutputKeys{modelIndex}, key))
+                    producerCount = producerCount + 1;
+                end
+            end
+            if producerCount > 1
+                result.Warnings{end + 1} = sprintf( ...
+                    ['Signal "%s" is produced by %d models. With From/Goto ', ...
+                     'routing every signal name must be unique - rename the ', ...
+                     'duplicate output ports.'], tagOf(key), producerCount); %#ok<AGROW>
+            end
+        end
+
         % BORN CLEAN DYNAMIC GEOMETRY
         longestTagLength = 6;
         for tagIndex = 1:numel(usedTags)
@@ -637,7 +660,7 @@ try
             gotoBlockName = makeUniqueBlockName(targetModel, ['Goto_' tag]);
             globalGotoLeft = 85 + blockSpacing;
             
-            % FIX 1 APPLIED: Exactly 4 elements in the Position array to prevent crashes
+            % EXACTLY 4 ELEMENTS: [left, top, right, bottom]
             add_block('simulink/Signal Routing/Goto', [targetModel '/' gotoBlockName], 'GotoTag', tag, ...
                 'Position', [globalGotoLeft, signalY - 10, globalGotoLeft + commonFromGotoWidth, signalY + 10]);
             
@@ -680,7 +703,7 @@ try
 
     else
         % ============================================================
-        % DIRECT LINES MODE (Unchanged layout handling)
+        % DIRECT LINES MODE
         % ============================================================
         progressFcn(0.65, 'Adding Model Reference blocks...');
         modelBlockNames = cell(numModels, 1);
@@ -802,7 +825,6 @@ try
     destCacheFolder = fileparts(targetModelFile);
     if isempty(destCacheFolder), destCacheFolder = pwd; end
     
-    % Safe isSameDir check
     isSameDir = false;
     try
         sInfo = dir(pwd); dInfo = dir(destCacheFolder);
@@ -816,7 +838,6 @@ try
     end
     open_system(targetModel);
 
-    % FIX: Respect CloseReferencedModels option
     if options.CloseReferencedModels
         closeLoadedModels(loadedByUs);
     end
