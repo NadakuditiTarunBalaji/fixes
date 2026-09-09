@@ -1,6 +1,6 @@
 function result = arrangeModelLayout(systemName, options)
-%ARRANGEMODELLAYOUT Direct Port Y-Locking Engine.
-% Guarantees 100% flat, straight horizontal lines with ZERO vertical steps.
+%ARRANGEMODELLAYOUT Horizontal pipeline layout engine with uniform heights,
+% even row/column spacing, 100% flat lines, and zero block overlaps.
 
 if nargin < 2 || isempty(options), options = struct(); end
 
@@ -51,8 +51,8 @@ try
     origConns = snapshotConns(blocks);
 
     if options.FullRelayout
-        stage = 'direct port y-locking layout';
-        counts = doDirectPortYLockingRelayout(sys, blocks, blockType, options, counts);
+        stage = 'horizontal pipeline re-layout';
+        counts = doHorizontalPipelineRelayout(sys, blocks, blockType, options, counts);
     else
         stage = 'conservative layout';
         counts = doConservativeLayout(sys, blocks, blockType, options, counts);
@@ -87,9 +87,9 @@ end
 end
 
 % =========================================================================
-%  DIRECT PORT-TO-PORT Y-LOCKING ENGINE
+%  DYNAMIC HORIZONTAL PIPELINE ENGINE
 % =========================================================================
-function counts = doDirectPortYLockingRelayout(sys, blocks, blockType, options, counts)
+function counts = doHorizontalPipelineRelayout(sys, blocks, blockType, options, counts)
 
 modelIdx  = find(strcmp(blockType, 'Model') | strcmp(blockType, 'SubSystem'));
 inportIdx = find(strcmp(blockType, 'Inport'));
@@ -116,7 +116,7 @@ for f = [fromIdx, gotoIdx]
     end
 end
 
-% 2. Calculate Model Reference Heights (Dynamic per port count, strict 36px pitch)
+% 2. Calculate Uniform Model Reference Height (Tallest model wins for clean row)
 modelWidths = zeros(nModels, 1);
 modelHeights = zeros(nModels, 1);
 for k = 1:nModels
@@ -128,10 +128,9 @@ for k = 1:nModels
     modelHeights(k) = max(140, (nP + 1) * 36);
 end
 
-if options.SameSize
-    uniformH = max(modelHeights);
-    modelHeights(:) = uniformH;
-end
+% Option A: All models share the exact same uniform height
+uniformH = max(modelHeights);
+modelHeights(:) = uniformH;
 
 % 3. Calculate Far-Left Clearance for Root Inports and Root Gotos
 inportX = 50;
@@ -155,7 +154,7 @@ for i = 1:numel(inportIdx)
 end
 rootGotoRight = rootGotoX + maxRootGotoW;
 
-% 4. Position Model Reference Blocks Horizontally
+% 4. Position Model Reference Blocks Horizontally with Dynamic Column Spacing
 modelPositions = zeros(nModels, 4);
 fromModelGap = 60;
 gotoModelGap = 60;
@@ -225,14 +224,13 @@ for k = 1:nModels
         end
     end
 
-    % COMPLETED CUT-OFF LINE HERE:
-    currentX = mX + mW + gotoModelGap + maxGotoW + 60;
+    currentX = mX + mW + gotoModelGap + nettoGotoWidth(maxGotoW) + 60;
 end
 
 topModel = strtok(sys, '/');
 set_param(topModel, 'SimulationCommand', 'update');
 
-% 5. Align Blocks to EXACT Model Port Y (100% Flat Horizontal Lines)
+% 5. Align From, Goto, and Delay Blocks to Exact Model Port Y (100% Flat Horizontal Lines)
 for k = 1:nModels
     m = modelIdx(k);
     mPos = modelPositions(k, :);
@@ -241,8 +239,8 @@ for k = 1:nModels
     % Inport Side Alignment: From -> Delay -> Model Port
     for p = 1:numel(ports.Inport)
         pHandle = ports.Inport(p);
-        pPos = get_param(pHandle, 'Position');
-        pY = pPos(2); % Exact Y-center of model input port
+        pY = get_param(pHandle, 'Position');
+        pY = pY(2); % Exact Y-center of model input port
 
         lineH = get_param(pHandle, 'Line');
         if lineH == -1, continue; end
@@ -304,13 +302,13 @@ for k = 1:nModels
     end
 end
 
-% 6. Align Root Inports (Far Left) and Root Outports (Far Right)
+% 6. Option A: Lock Root Inports & Root Outports to exact fed/consumed port Y
 if options.AlignPortColumns
     % Root Inports
     for i = 1:numel(inportIdx)
         p = get_param(blocks{inportIdx(i)}, 'PortHandles');
-        yCoord = modelBaseY + (i - 1) * 36;
         l = get_param(p.Outport(1), 'Line');
+        yCoord = modelBaseY + (i - 1) * 36; % Fallback
         if l ~= -1
             dsts = get_param(l, 'DstPortHandle');
             for d = 1:numel(dsts)
@@ -318,7 +316,7 @@ if options.AlignPortColumns
                     gBlock = get_param(dsts(d), 'Parent');
                     r = get_param(gBlock, 'Position');
                     gW = r(3) - r(1);
-                    % Lock Goto to exact Inport Y height
+                    yCoord = (r(2) + r(4)) / 2; % Lock to Goto Y
                     set_param(gBlock, 'Position', [rootGotoX, yCoord - 10, rootGotoX + gW, yCoord + 10]);
                 end
             end
@@ -333,30 +331,33 @@ if options.AlignPortColumns
     rootOutportX = rootFromX + 180;
 
     for i = 1:numel(outportIdx)
-        yCoord = modelBaseY + (i - 1) * 36;
-        set_param(blocks{outportIdx(i)}, 'Position', [rootOutportX, yCoord - 10, rootOutportX + inportW, yCoord + 10]);
-        counts.OutportsAligned = counts.OutportsAligned + 1;
-
         p = get_param(blocks{outportIdx(i)}, 'PortHandles');
         l = get_param(p.Inport(1), 'Line');
+        yCoord = modelBaseY + (i - 1) * 36; % Fallback
         if l ~= -1
             srcP = get_param(l, 'SrcPortHandle');
             if srcP ~= -1 && strcmp(get_param(get_param(srcP, 'Parent'), 'BlockType'), 'From')
                 fBlock = get_param(srcP, 'Parent');
                 r = get_param(fBlock, 'Position');
                 fW = r(3) - r(1);
-                % Lock From to exact Outport Y height
+                yCoord = (r(2) + r(4)) / 2; % Lock to From Y
                 set_param(fBlock, 'Position', [rootFromX - fW, yCoord - 10, rootFromX, yCoord + 10]);
             end
         end
+        set_param(blocks{outportIdx(i)}, 'Position', [rootOutportX, yCoord - 10, rootOutportX + inportW, yCoord + 10]);
+        counts.OutportsAligned = counts.OutportsAligned + 1;
     end
 end
 
-% 7. Force 100% Straight Flat 2-Point Line Overrides
+% 7. Force 100% Flat 2-Point Lines
 if options.TidyLines
     set_param(topModel, 'SimulationCommand', 'update');
     counts = forceFlatLines(blocks, counts);
 end
+end
+
+function w = nettoGotoWidth(val)
+    w = max(100, val);
 end
 
 % =========================================================================
