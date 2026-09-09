@@ -1,6 +1,6 @@
 function result = arrangeModelLayout(systemName, options)
-%ARRANGEMODELLAYOUT Horizontal pipeline layout engine with uniform heights,
-% even row/column spacing, 100% flat lines, and zero block overlaps.
+%ARRANGEMODELLAYOUT Horizontal pipeline layout engine with dynamic tag
+% widths, zero block overlaps, generous far-left clearance, and 100% flat lines.
 
 if nargin < 2 || isempty(options), options = struct(); end
 
@@ -9,6 +9,18 @@ if ~isfield(options, 'Layout'), options.Layout = 'horizontal'; end
 if ~isfield(options, 'SameSize'), options.SameSize = true; end
 if ~isfield(options, 'AlignPortColumns'), options.AlignPortColumns = true; end
 if ~isfield(options, 'TidyLines'), options.TidyLines = true; end
+
+% Fill user spacing options with safe defaults
+defaultSpacing = struct( ...
+    'FromModelGap',    100, ...
+    'ModelGotoGap',    100, ...
+    'FromToDelayGap',  40, ...
+    'ModelToModelGap', 400);
+if isfield(options, 'Spacing') && isstruct(options.Spacing)
+    options.Spacing = fillDefaults(options.Spacing, defaultSpacing);
+else
+    options.Spacing = defaultSpacing;
+end
 
 sys = char(systemName);
 topModel = strtok(sys, '/');
@@ -100,7 +112,21 @@ gotoIdx   = find(strcmp(blockType, 'Goto'));
 nModels = numel(modelIdx);
 if nModels == 0, return; end
 
-% 1. Auto-size From & Goto blocks dynamically so text is NEVER truncated
+% Read user gaps from options
+fromModelGap   = max(20, round(double(options.Spacing.FromModelGap)));
+modelGotoGap   = max(20, round(double(options.Spacing.ModelGotoGap)));
+fromToDelayGap = max(10, round(double(options.Spacing.FromToDelayGap)));
+userModelToModelGap = max(50, round(double(options.Spacing.ModelToModelGap)));
+
+delayWidth   = 40;
+inportX      = 50;
+inportW      = 35;
+inportToGotoGap = 40;
+rootClearance   = 120; % Generous 120pt air gap between Root Gotos and Model 1 From/Delay
+tagClearance    = 120; % Generous 120pt air gap between model Goto and next model From
+modelBaseY      = 200;
+
+% 1. Calculate Dynamic Widths for From & Goto Blocks based on tag text length
 for f = [fromIdx, gotoIdx]
     try
         tag = char(get_param(blocks{f}, 'GotoTag'));
@@ -116,7 +142,7 @@ for f = [fromIdx, gotoIdx]
     end
 end
 
-% 2. Calculate Uniform Model Reference Height (Tallest model wins for clean row)
+% 2. Calculate Uniform Model Reference Heights (All models share same height for clean row)
 modelWidths = zeros(nModels, 1);
 modelHeights = zeros(nModels, 1);
 for k = 1:nModels
@@ -128,18 +154,18 @@ for k = 1:nModels
     modelHeights(k) = max(140, (nP + 1) * 36);
 end
 
-% Option A: All models share the exact same uniform height
-uniformH = max(modelHeights);
-modelHeights(:) = uniformH;
+if options.SameSize
+    uniformH = max(modelHeights);
+    modelHeights(:) = uniformH;
+end
 
 % 3. Calculate Far-Left Clearance for Root Inports and Root Gotos
-inportX = 50;
-inportW = 35;
-rootGotoX = inportX + inportW + 40;
-
+rootGotoX = inportX + inportW + inportToGotoGap;
 maxRootGotoW = 100;
+
 for i = 1:numel(inportIdx)
     p = get_param(blocks{inportIdx(i)}, 'PortHandles');
+    if isempty(p.Outport) || p.Outport(1) == -1, continue; end
     l = get_param(p.Outport(1), 'Line');
     if l ~= -1
         dsts = get_param(l, 'DstPortHandle');
@@ -154,15 +180,11 @@ for i = 1:numel(inportIdx)
 end
 rootGotoRight = rootGotoX + maxRootGotoW;
 
-% 4. Position Model Reference Blocks Horizontally with Dynamic Column Spacing
+% 4. Dynamic Horizontal X-Coordinate Placement for Models (Zero Overlaps)
 modelPositions = zeros(nModels, 4);
-fromModelGap = 60;
-gotoModelGap = 60;
-delayWidth   = 40;
-delayGap     = 30;
-modelBaseY   = 200;
 
-currentX = rootGotoRight + 80;
+% Start Model 1 far enough right to GUARANTEE 120pt air gap after Root Gotos
+currentX = rootGotoRight + rootClearance;
 
 for k = 1:nModels
     m = modelIdx(k);
@@ -197,7 +219,7 @@ for k = 1:nModels
         end
     end
 
-    leftSpace = fromModelGap + maxFromW + (hasDelay * (delayWidth + delayGap));
+    leftSpace = fromModelGap + maxFromW + (hasDelay * (delayWidth + fromToDelayGap));
     mX = currentX + leftSpace;
     mY = modelBaseY;
     mW = modelWidths(k);
@@ -224,7 +246,10 @@ for k = 1:nModels
         end
     end
 
-    currentX = mX + mW + gotoModelGap + nettoGotoWidth(maxGotoW) + 60;
+    % Advance X for next model with enforced minimum clearance
+    minCorridor = modelGotoGap + maxGotoW + tagClearance;
+    stepX = max(userModelToModelGap - mX + currentX, mW + minCorridor);
+    currentX = mX + stepX;
 end
 
 topModel = strtok(sys, '/');
@@ -264,7 +289,7 @@ for k = 1:nModels
                     if strcmp(get_param(fBlock, 'BlockType'), 'From')
                         fRect = get_param(fBlock, 'Position');
                         fW = fRect(3) - fRect(1);
-                        fRight = dLeft - delayGap;
+                        fRight = dLeft - fromToDelayGap;
                         set_param(fBlock, 'Position', [fRight - fW, pY - 10, fRight, pY + 10]);
                         counts.TagBlocksAligned = counts.TagBlocksAligned + 1;
                     end
@@ -294,7 +319,7 @@ for k = 1:nModels
             if strcmp(get_param(dstBlock, 'BlockType'), 'Goto')
                 gRect = get_param(dstBlock, 'Position');
                 gW = gRect(3) - gRect(1);
-                gLeft = mPos(3) + gotoModelGap;
+                gLeft = mPos(3) + modelGotoGap;
                 set_param(dstBlock, 'Position', [gLeft, pY - 10, gLeft + gW, pY + 10]);
                 counts.TagBlocksAligned = counts.TagBlocksAligned + 1;
             end
@@ -307,6 +332,7 @@ if options.AlignPortColumns
     % Root Inports
     for i = 1:numel(inportIdx)
         p = get_param(blocks{inportIdx(i)}, 'PortHandles');
+        if isempty(p.Outport) || p.Outport(1) == -1, continue; end
         l = get_param(p.Outport(1), 'Line');
         yCoord = modelBaseY + (i - 1) * 36; % Fallback
         if l ~= -1
@@ -326,12 +352,13 @@ if options.AlignPortColumns
     end
 
     % Root Outports
-    lastModelRight = max(modelPositions(:, 3)) + gotoModelGap + 150;
+    lastModelRight = max(modelPositions(:, 3)) + modelGotoGap + 150;
     rootFromX = lastModelRight;
     rootOutportX = rootFromX + 180;
 
     for i = 1:numel(outportIdx)
         p = get_param(blocks{outportIdx(i)}, 'PortHandles');
+        if isempty(p.Inport) || p.Inport(1) == -1, continue; end
         l = get_param(p.Inport(1), 'Line');
         yCoord = modelBaseY + (i - 1) * 36; % Fallback
         if l ~= -1
@@ -354,10 +381,6 @@ if options.TidyLines
     set_param(topModel, 'SimulationCommand', 'update');
     counts = forceFlatLines(blocks, counts);
 end
-end
-
-function w = nettoGotoWidth(val)
-    w = max(100, val);
 end
 
 % =========================================================================
@@ -430,4 +453,12 @@ for b = 1:numel(blocks)
     end
 end
 conns = sort(conns);
+end
+
+function options = fillDefaults(options, defaults)
+if isempty(options), options = struct(); end
+fields = fieldnames(defaults);
+for index = 1:numel(fields)
+    if ~isfield(options, fields{index}), options.(fields{index}) = defaults.(fields{index}); end
+end
 end

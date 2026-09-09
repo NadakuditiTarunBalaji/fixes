@@ -1,8 +1,6 @@
 function result = buildParentModelCore(modelsFolder, selectedModels, targetModelName, options)
 %BUILDPARENTMODELCORE Shared engine that generates a parent Simulink model
 % containing Model Reference blocks.
-%
-%   result = buildParentModelCore(modelsFolder, selectedModels, targetModelName, options)
 
 % ---------------------------------------------------------------- Defaults
 if nargin < 4 || isempty(options)
@@ -466,7 +464,7 @@ try
             end
         end
 
-        % GUARANTEED INITIALIZATION OF uniqueOutputKeyList
+        % Collect unique output key list for global ports and duplicate warnings
         allOutputKeys = {};
         for modelIndex = 1:numModels
             allOutputKeys = [allOutputKeys; modelOutputKeys{modelIndex}]; %#ok<AGROW>
@@ -507,7 +505,9 @@ try
         gotoGap = modelGotoGap;
         delayGap = fromToDelayGap;
         
-        minModelGap = commonFromGotoWidth * 2 + 160; % Guaranteed no overlap
+        % DYNAMIC MODEL-TO-MODEL SPACING MATH (GUARANTEES ZERO OVERLAPS)
+        tagClearance = 120; % Generous 120pt air gap between model Goto and next model From
+        minModelGap = gotoGap + commonFromGotoWidth + tagClearance + commonFromGotoWidth + fromGap + (delayGap + 40);
         if isempty(options.ModelToModelGap)
             modelToModelGap = max(400, minModelGap);
             verticalModelGap = 100;
@@ -518,7 +518,15 @@ try
         end
         
         modelBaseY = 200;
-        modelBaseX = max(500, 150 + commonFromGotoWidth + fromGap + 250);
+        
+        % FAR-LEFT CLEARANCE: Root Inport (50) + Width (35) + Gap (40) + Root Goto + 120pt Air Gap
+        maxRootGotoW = 100;
+        for sIdx = 1:numel(usedTags)
+            maxRootGotoW = max(maxRootGotoW, ceil(numel(usedTags{sIdx}) * 8.5) + 30);
+        end
+        rootClearance = 120;
+        modelBaseX = 50 + 35 + 40 + maxRootGotoW + rootClearance + commonFromGotoWidth + (delayGap + 40) + fromGap;
+        
         globalInportColor = '[0.65,0.90,0.65]';
         globalOutportColor = '[0.95,0.70,0.45]';
 
