@@ -4,7 +4,7 @@ function result = buildParentModelCore(modelsFolder, selectedModels, targetModel
 %
 %   result = buildParentModelCore(modelsFolder, selectedModels, targetModelName, options)
 
-% ---------------------------------------------------------------- defaults
+% ---------------------------------------------------------------- Defaults
 if nargin < 4 || isempty(options)
     options = struct();
 end
@@ -76,7 +76,7 @@ result = struct( ...
     'SubsystemName',        '', ...
     'BackupFile',           '');
 
-% ------------------------------------------------------------ validate in
+% ------------------------------------------------------------ Validate Inputs
 modelsFolder = char(modelsFolder);
 if ~isfolder(modelsFolder)
     error('buildParentModelCore:InvalidFolder', 'The models folder does not exist: %s', modelsFolder);
@@ -125,7 +125,7 @@ if ~result.PreviewOnly && isfile(targetModelFile) && ~options.Overwrite
         'The model file already exists:\n%s\n\nOverwrite it (or choose a different name).', targetModelFile);
 end
 
-% --------------------------------------------------------------- discovery
+% --------------------------------------------------------------- Discovery
 progressFcn(0.05, 'Discovering model files...');
 availableModels = discoverModelFiles(modelsFolder);
 if isempty(availableModels)
@@ -147,7 +147,7 @@ for modelIndex = 1:numModels
     modelPaths{modelIndex} = availableModels.paths{matchIndexes(1)};
 end
 
-% ------------------------------------------------------------ load models
+% ------------------------------------------------------------ Load Models
 progressFcn(0.15, 'Loading referenced models...');
 searchPath = genpath(modelsFolder);
 if ~isempty(searchPath), addpath(searchPath); end
@@ -168,7 +168,7 @@ end
 
 parentCreated = false;
 try
-    % ---------------------------------------------------- configuration
+    % ---------------------------------------------------- Configuration
     progressFcn(0.3, 'Checking configuration parameters...');
     configParamNames = options.ConfigParameters;
     if ischar(configParamNames), configParamNames = {configParamNames};
@@ -217,7 +217,7 @@ try
     result.ConfigParamNames = configParamNames(okParams);
     result.ConfigParamValues = configParamValues(okParams);
 
-    % --------------------------------------------------------- interfaces
+    % --------------------------------------------------------- Interfaces
     progressFcn(0.4, 'Reading model interfaces...');
     modelInfo = struct('Name', modelNames, 'Path', modelPaths, ...
         'InputNames', cell(numModels, 1), 'OutputNames', cell(numModels, 1));
@@ -235,7 +235,7 @@ try
         result.Models(modelIndex).OutputNames = modelInfo(modelIndex).OutputNames;
     end
 
-    % ---------------------------------------------------------------- plan
+    % ---------------------------------------------------------------- Plan
     progressFcn(0.5, 'Planning connections...');
     inputConnected = cell(numModels, 1);
     for modelIndex = 1:numModels
@@ -359,7 +359,7 @@ try
         return;
     end
 
-    % ------------------------------------------------------------- preview
+    % ------------------------------------------------------------- Preview
     if result.PreviewOnly
         if options.CloseReferencedModels, closeLoadedModels(loadedByUs); end
         result.Success = true;
@@ -367,7 +367,7 @@ try
         return;
     end
 
-    % --------------------------------------------------------------- build
+    % --------------------------------------------------------------- Build
     progressFcn(0.6, 'Creating the parent model...');
     if isfile(targetModelFile) && options.BackupExisting
         backupFile = [targetModelFile '.bak'];
@@ -466,7 +466,7 @@ try
             end
         end
 
-        % FIX: DEFINITION OF uniqueOutputKeyList FOR DUP OUTPUT WARN & GLOBAL PORT CREATION
+        % GUARANTEED INITIALIZATION OF uniqueOutputKeyList
         allOutputKeys = {};
         for modelIndex = 1:numModels
             allOutputKeys = [allOutputKeys; modelOutputKeys{modelIndex}]; %#ok<AGROW>
@@ -489,7 +489,7 @@ try
             end
         end
 
-        % BORN CLEAN DYNAMIC GEOMETRY
+        % Dynamic width ensures tag names are 100% readable without truncation (...)
         longestTagLength = 6;
         for tagIndex = 1:numel(usedTags)
             longestTagLength = max(longestTagLength, numel(usedTags{tagIndex}));
@@ -660,7 +660,7 @@ try
             gotoBlockName = makeUniqueBlockName(targetModel, ['Goto_' tag]);
             globalGotoLeft = 85 + blockSpacing;
             
-            % EXACTLY 4 ELEMENTS: [left, top, right, bottom]
+            % EXACT 4-ELEMENT VECTOR FOR GOTO POSITION: [left, top, right, bottom]
             add_block('simulink/Signal Routing/Goto', [targetModel '/' gotoBlockName], 'GotoTag', tag, ...
                 'Position', [globalGotoLeft, signalY - 10, globalGotoLeft + commonFromGotoWidth, signalY + 10]);
             
