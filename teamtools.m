@@ -1189,3 +1189,483 @@ left = max(1, round((screenSize(3) - width) / 2));
 bottom = max(1, round((screenSize(4) - height) / 2));
 position = [left bottom width height];
 end
+
+% =========================================================================
+%  CORE IMPLEMENTATION ENGINE
+% =========================================================================
+
+function result = buildParentModelCore(folder, models, modelName, options)
+    result = struct('Cancelled', false, 'TargetModel', modelName, ...
+                    'OutputFile', '', 'Models', struct('Name', {}, 'InputNames', {}, 'OutputNames', {}));
+
+    allFiles = discoverModelFiles(folder);
+    modelPaths = struct();
+    for i = 1:numel(models)
+        mName = models{i};
+        found = false;
+        for j = 1:numel(allFiles)
+            [~, fName] = fileparts(allFiles(j).name);
+            if strcmpi(fName, mName)
+                modelPaths.(mName) = fullfile(allFiles(j).folder, allFiles(j).name);
+                found = true;
+                break;
+            end
+        end
+        if ~found
+            error('Model "%s" not found in search directory.', mName);
+        end
+    end
+
+    modelsMeta = [];
+    for i = 1:numel(models)
+        mName = models{i};
+        mPath = modelPaths.(mName);
+        
+        wasLoaded = bdIsLoaded(mName);
+        if ~wasLoaded
+            load_system(mPath);
+        end
+        
+        inBlks = find_system(mName, 'SearchDepth', 1, 'BlockType', 'Inport');
+        if ~isempty(inBlks)
+            portsNum = cellfun(@(x) str2double(get_param(x, 'Port')), inBlks);
+            [~, idx] = sort(portsNum);
+            inBlks = inBlks(idx);
+            inNames = get_param(inBlks, 'Name');
+            if ischar(inNames), inNames = {inNames}; end
+        else
+            inNames = {};
+        end
+        
+        outBlks = find_system(mName, 'SearchDepth', 1, 'BlockType', 'Outport');
+        if ~isempty(outBlks)
+            portsNum = cellfun(@(x) str2double(get_param(x, 'Port')), outBlks);
+            [~, idx] = sort(portsNum);
+            outBlks = outBlks(idx);
+            outNames = get_param(outBlks, 'Name');
+            if ischar(outNames), outNames = {outNames}; end
+        else
+            outNames = {};
+        end
+        
+        meta = struct('Name', mName, 'Path', mPath, 'InputNames', {inNames}, 'OutputNames', {outNames}, 'WasLoaded', wasLoaded);
+        modelsMeta = [modelsMeta; meta]; %#ok<AGROW>
+    end
+    
+    result.Models = modelsMeta;
+    
+    if options.PreviewOnly
+        return;
+    end
+    
+    targetFile = fullfile(options.OutputFolder, [modelName '.slx']);
+    
+    if bdIsLoaded(modelName)
+        close_system(modelName, 0);
+    end
+    if isfile(targetFile) && options.BackupExisting
+        [p, n, e] = fileparts(targetFile);
+        copyfile(targetFile, fullfile(p, [n '.bak']));
+    end
+    
+    new_system(modelName);
+    open_system(modelName);
+    
+    set_param(modelName, 'Solver', 'FixedStepDiscrete');
+    
+    blockHandles = [];
+    refBlockPaths = cell(numel(models), 1);
+    
+    spacing = options.BlockSpacing;
+    x = 150; y = 150;
+    
+    palette = {'LightBlue', 'Green', 'Yellow', 'Cyan', 'Orange', 'Magenta', 'Gray'};
+    
+    for i = 1:numel(models)
+        mName = models{i};
+        numIn = numel(modelsMeta(i).InputNames);
+        numOut = numel(modelsMeta(i).OutputNames);
+        blockHeight = max(80, max(numIn, numOut) * 35);
+        blockWidth = 160;
+        
+        pos = [x, y, x + blockWidth, y + blockHeight];
+        blockPath = [modelName '/' mName];
+        h = add_block('simulink/Ports & Subsystems/Model Reference', blockPath, ...
+            'Position', pos, 'MakeNameUnique', 'on');
+        blockHandles = [blockHandles; h]; %#ok<AGROW>
+        
+        actualBlockName = get_param(h, 'Name');
+        refBlockPaths{i} = [modelName '/' actualBlockName];
+        
+        set_param(h, 'ModelName', mName);
+        
+        if options.ColorBlocks
+            color = palette{mod(i-1, numel(palette)) + 1};
+            set_param(h, 'BackgroundColor', color);
+        end
+        
+        if strcmp(options.Layout, 'horizontal')
+            x = x + blockWidth + spacing;
+        else
+            y = y + blockHeight + spacing;
+        end
+    end
+    
+    connections = {};
+    for dstIdx = 1:numel(models)
+        dstMeta = modelsMeta(dstIdx);
+        dstBlock = refBlockPaths{dstIdx};
+        
+        for portInIdx = 1:numel(dstMeta.InputNames)
+            inName = dstMeta.InputNames{portInIdx};
+            matched = false;
+            
+            for srcIdx = 1:numel(models)
+                if srcIdx == dstIdx, continue; end
+                srcMeta = modelsMeta(srcIdx);
+                srcBlock = refBlockPaths{srcIdx};
+                
+                for portOutIdx = 1:numel(srcMeta.OutputNames)
+                    outName = srcMeta.OutputNames{portOutIdx};
+                    
+                    if options.CaseInsensitiveMatch
+                        isMatch = strcmpi(inName, outName);
+                    else
+                        isMatch = strcmp(inName, outName);
+                    end
+                    
+                    if isMatch
+                        connections{end+1} = struct(...
+                            'SrcBlock', srcBlock, 'SrcIdx', srcIdx, 'SrcPort', portOutIdx, ...
+                            'DstBlock', dstBlock, 'DstIdx', dstIdx, 'DstPort', portInIdx, ...
+                            'SignalName', outName); %#ok<AGROW>
+                        matched = true;
+                        break;
+                    end
+                end
+                if matched, break; end
+            end
+        end
+    end
+    
+    isLines = strcmp(options.ConnectionMethod, 'lines');
+    gotoTags = struct();
+    
+    for i = 1:numel(connections)
+        conn = connections{i};
+        isFeedback = (conn.SrcIdx >= conn.DstIdx);
+        
+        if isLines
+            if options.AutoDelayFeedback && isFeedback
+                srcPos = get_param(conn.SrcBlock, 'Position');
+                dstPos = get_param(conn.DstBlock, 'Position');
+                midY = round((srcPos(2) + dstPos(4)) / 2);
+                midX = round((srcPos(1) + dstPos(3)) / 2);
+                
+                delayName = [modelName '/Delay_' conn.SignalName];
+                hDelay = add_block('simulink/Discrete/Unit Delay', delayName, ...
+                    'Position', [midX - 15, midY - 15, midX + 15, midY + 15], 'MakeNameUnique', 'on');
+                blockHandles = [blockHandles; hDelay]; %#ok<AGROW>
+                
+                actualDelayName = get_param(hDelay, 'Name');
+                
+                add_line(modelName, [get_param(conn.SrcBlock, 'Name') '/' num2str(conn.SrcPort)], ...
+                    [actualDelayName '/1'], 'autorouting', 'on');
+                add_line(modelName, [actualDelayName '/1'], ...
+                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
+            else
+                add_line(modelName, [get_param(conn.SrcBlock, 'Name') '/' num2str(conn.SrcPort)], ...
+                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
+            end
+        else
+            tag = matlab.lang.makeValidName(conn.SignalName);
+            srcKey = sprintf('b%d_p%d', conn.SrcIdx, conn.SrcPort);
+            if ~isfield(gotoTags, srcKey)
+                srcPos = get_param(conn.SrcBlock, 'Position');
+                numPorts = numel(modelsMeta(conn.SrcIdx).OutputNames);
+                pY = srcPos(2) + (srcPos(4) - srcPos(2)) * (conn.SrcPort / (numPorts + 1));
+                gotoPos = [srcPos(3) + 30, pY - 10, srcPos(3) + 90, pY + 10];
+                
+                gotoPath = [modelName '/Goto_' tag];
+                hGoto = add_block('simulink/Signal Routing/Goto', gotoPath, ...
+                    'Position', gotoPos, 'MakeNameUnique', 'on');
+                blockHandles = [blockHandles; hGoto]; %#ok<AGROW>
+                
+                actualGotoName = get_param(hGoto, 'Name');
+                set_param(hGoto, 'GotoTag', tag, 'TagVisibility', 'local');
+                
+                add_line(modelName, [get_param(conn.SrcBlock, 'Name') '/' num2str(conn.SrcPort)], ...
+                    [actualGotoName '/1'], 'autorouting', 'on');
+                
+                gotoTags.(srcKey) = tag;
+            end
+            
+            dstPos = get_param(conn.DstBlock, 'Position');
+            numPorts = numel(modelsMeta(conn.DstIdx).InputNames);
+            pY = dstPos(2) + (dstPos(4) - dstPos(2)) * (conn.DstPort / (numPorts + 1));
+            fromPos = [dstPos(1) - 90, pY - 10, dstPos(1) - 30, pY + 10];
+            
+            fromPath = [modelName '/From_' tag];
+            hFrom = add_block('simulink/Signal Routing/From', fromPath, ...
+                'Position', fromPos, 'MakeNameUnique', 'on');
+            blockHandles = [blockHandles; hFrom]; %#ok<AGROW>
+            
+            actualFromName = get_param(hFrom, 'Name');
+            set_param(hFrom, 'GotoTag', tag);
+            
+            if options.AutoDelayFeedback && isFeedback
+                delayPos = [fromPos(3) + 5, pY - 10, fromPos(3) + 20, pY + 10];
+                delayPath = [modelName '/Delay_' tag];
+                hDelay = add_block('simulink/Discrete/Unit Delay', delayPath, ...
+                    'Position', delayPos, 'MakeNameUnique', 'on');
+                blockHandles = [blockHandles; hDelay]; %#ok<AGROW>
+                
+                actualDelayName = get_param(hDelay, 'Name');
+                
+                add_line(modelName, [actualFromName '/1'], [actualDelayName '/1'], 'autorouting', 'on');
+                add_line(modelName, [actualDelayName '/1'], ...
+                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
+            else
+                add_line(modelName, [actualFromName '/1'], ...
+                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
+            end
+        end
+    end
+    
+    for i = 1:numel(models)
+        meta = modelsMeta(i);
+        block = refBlockPaths{i};
+        blockPos = get_param(block, 'Position');
+        
+        for pIdx = 1:numel(meta.InputNames)
+            inName = meta.InputNames{pIdx};
+            isConnected = false;
+            for k = 1:numel(connections)
+                if strcmp(connections{k}.DstBlock, block) && connections{k}.DstPort == pIdx
+                    isConnected = true;
+                    break;
+                end
+            end
+            
+            if ~isConnected
+                pY = blockPos(2) + (blockPos(4) - blockPos(2)) * (pIdx / (numel(meta.InputNames) + 1));
+                inPortPos = [blockPos(1) - 150, pY - 7, blockPos(1) - 120, pY + 7];
+                inPortPath = [modelName '/' inName];
+                
+                hIn = add_block('simulink/Sources/In1', inPortPath, ...
+                    'Position', inPortPos, 'MakeNameUnique', 'on');
+                blockHandles = [blockHandles; hIn]; %#ok<AGROW>
+                actualInName = get_param(hIn, 'Name');
+                
+                add_line(modelName, [actualInName '/1'], [get_param(block, 'Name') '/' num2str(pIdx)], 'autorouting', 'on');
+            end
+        end
+        
+        for pIdx = 1:numel(meta.OutputNames)
+            outName = meta.OutputNames{pIdx};
+            isConnected = false;
+            for k = 1:numel(connections)
+                if strcmp(connections{k}.SrcBlock, block) && connections{k}.SrcPort == pIdx
+                    isConnected = true;
+                    break;
+                end
+            end
+            
+            if ~isConnected
+                pY = blockPos(2) + (blockPos(4) - blockPos(2)) * (pIdx / (numel(meta.OutputNames) + 1));
+                outPortPos = [blockPos(3) + 120, pY - 7, blockPos(3) + 150, pY + 7];
+                outPortPath = [modelName '/' outName];
+                
+                hOut = add_block('simulink/Sinks/Out1', outPortPath, ...
+                    'Position', outPortPos, 'MakeNameUnique', 'on');
+                blockHandles = [blockHandles; hOut]; %#ok<AGROW>
+                actualOutName = get_param(hOut, 'Name');
+                
+                add_line(modelName, [get_param(block, 'Name') '/' num2str(pIdx)], [actualOutName '/1'], 'autorouting', 'on');
+            end
+        end
+    end
+    
+    if options.WrapInSubsystem && ~isempty(blockHandles)
+        validHandles = blockHandles(ishandle(blockHandles));
+        if ~isempty(validHandles)
+            subsystemHandle = Simulink.BlockDiagram.createSubsystem(validHandles);
+            set_param(subsystemHandle, 'Name', 'MainProcess');
+        end
+    end
+    
+    for i = 1:numel(modelsMeta)
+        if ~modelsMeta(i).WasLoaded && options.CloseReferencedModels
+            close_system(modelsMeta(i).Name, 0);
+        end
+    end
+    
+    save_system(modelName, targetFile);
+    result.OutputFile = targetFile;
+end
+
+function [connections, connStats] = listModelConnections(modelName)
+    connections = struct('Label', {}, 'System', {}, 'SrcBlockPath', {}, 'SrcPortIndex', {}, 'DstBlockPath', {}, 'DstPortIndex', {}, 'AlreadyDelayed', {});
+    connStats = struct();
+    
+    lines = find_system(modelName, 'FindAll', 'on', 'Type', 'line');
+    for i = 1:numel(lines)
+        try
+            srcBlkH = get_param(lines(i), 'SrcBlockHandle');
+            dstBlkH = get_param(lines(i), 'DstBlockHandle');
+            srcPortH = get_param(lines(i), 'SrcPortHandle');
+            dstPortH = get_param(lines(i), 'DstPortHandle');
+            
+            if isempty(srcBlkH) || isempty(dstBlkH) || srcBlkH == -1 || any(dstBlkH == -1), continue; end
+            
+            srcName = get_param(srcBlkH, 'Name');
+            srcType = get_param(srcBlkH, 'BlockType');
+            srcPortNum = get_param(srcPortH, 'PortNumber');
+            
+            for j = 1:numel(dstBlkH)
+                dBlk = dstBlkH(j);
+                dPort = dstPortH(j);
+                dstName = get_param(dBlk, 'Name');
+                dstType = get_param(dBlk, 'BlockType');
+                dstPortNum = get_param(dPort, 'PortNumber');
+                
+                label = sprintf('From %s [Port %d] -> To %s [Port %d]', srcName, srcPortNum, dstName, dstPortNum);
+                isDelayed = strcmp(srcType, 'UnitDelay') || strcmp(dstType, 'UnitDelay');
+                
+                connections(end+1) = struct(...
+                    'Label', label, ...
+                    'System', modelName, ...
+                    'SrcBlockPath', getfullname(srcBlkH), ...
+                    'SrcPortIndex', srcPortNum, ...
+                    'DstBlockPath', getfullname(dBlk), ...
+                    'DstPortIndex', dstPortNum, ...
+                    'AlreadyDelayed', isDelayed); %#ok<AGROW>
+            end
+        catch
+        end
+    end
+end
+
+function result = insertUnitDelayOnBranch(system, srcBlockPath, srcPortIndex, dstBlockPath, dstPortIndex, options)
+    parentSys = fileparts(srcBlockPath);
+    if isempty(parentSys), parentSys = system; end
+    
+    srcPortName = [get_param(srcBlockPath, 'Name') '/' num2str(srcPortIndex)];
+    dstPortName = [get_param(dstBlockPath, 'Name') '/' num2str(dstPortIndex)];
+    
+    try
+        delete_line(parentSys, srcPortName, dstPortName);
+    catch
+    end
+    
+    delayName = [parentSys '/UnitDelay_Manual'];
+    hDelay = add_block('simulink/Discrete/Unit Delay', delayName, 'MakeNameUnique', 'on');
+    actualDelayName = get_param(hDelay, 'Name');
+    
+    srcPos = get_param(srcBlockPath, 'Position');
+    dstPos = get_param(dstBlockPath, 'Position');
+    midX = round((srcPos(3) + dstPos(1)) / 2);
+    midY = round((srcPos(2) + dstPos(4)) / 2);
+    set_param(hDelay, 'Position', [midX-15, midY-15, midX+15, midY+15]);
+    
+    add_line(parentSys, srcPortName, [actualDelayName '/1'], 'autorouting', 'on');
+    add_line(parentSys, [actualDelayName '/1'], dstPortName, 'autorouting', 'on');
+    
+    result = struct('Message', sprintf('Successfully inserted Unit Delay: %s', actualDelayName));
+end
+
+function signalReport = configureSubsystemSignals(options)
+    subsys = gcb;
+    if isempty(subsys)
+        error('No block selected in Simulink. Click a Subsystem block first.');
+    end
+    if ~strcmp(get_param(subsys, 'BlockType'), 'Subsystem')
+        error('Selected block is not a Subsystem.');
+    end
+    
+    if options.ProcessInports
+        inports = find_system(subsys, 'SearchDepth', 1, 'BlockType', 'Inport');
+        for i = 1:numel(inports)
+            try
+                if options.MustResolve
+                    line = get_param(inports(i), 'LineHandles');
+                    if line.Outport ~= -1
+                        set_param(line.Outport, 'MustResolveToSignalObject', 'on');
+                    end
+                end
+            catch
+            end
+        end
+    end
+    
+    if options.ProcessOutports
+        outports = find_system(subsys, 'SearchDepth', 1, 'BlockType', 'Outport');
+        for i = 1:numel(outports)
+            try
+                line = get_param(outports(i), 'LineHandles');
+                if line.Inport ~= -1
+                    if options.ShowPropagation
+                        set_param(line.Inport, 'ShowPropagatedSignals', 'on');
+                    end
+                end
+            catch
+            end
+        end
+    end
+    signalReport = struct('Status', 'Success');
+end
+
+function result = extractAttributesCore(subsystemHandle, searchFolder, outputFile, options)
+    ports = getSubsystemPorts(subsystemHandle);
+    allPorts = {};
+    if strcmp(options.PortChoice, 'Inports') || strcmp(options.PortChoice, 'Both')
+        allPorts = [allPorts, ports.InportNames];
+    end
+    if strcmp(options.PortChoice, 'Outports') || strcmp(options.PortChoice, 'Both')
+        allPorts = [allPorts, ports.OutportNames];
+    end
+    
+    mFiles = dir(fullfile(searchFolder, '**', '*.m'));
+    fidOut = fopen(outputFile, 'w');
+    if fidOut == -1
+        error('Cannot open output file %s', outputFile);
+    end
+    
+    fprintf(fidOut, '%% Extracted Attribute Records\n');
+    fprintf(fidOut, '%% Subsystem: %s\n', ports.Path);
+    fprintf(fidOut, '%% Date: %s\n\n', char(datetime('now')));
+    
+    matchCount = 0;
+    for i = 1:numel(mFiles)
+        filePath = fullfile(mFiles(i).folder, mFiles(i).name);
+        fidIn = fopen(filePath, 'r');
+        if fidIn == -1, continue; end
+        
+        lineNum = 0;
+        while ~feof(fidIn)
+            line = fgetl(fidIn);
+            lineNum = lineNum + 1;
+            if ~ischar(line), continue; end
+            
+            for pIdx = 1:numel(allPorts)
+                portTag = allPorts{pIdx};
+                if options.CaseInsensitive
+                    matched = ~isempty(strfind(lower(line), lower(portTag)));
+                else
+                    matched = ~isempty(strfind(line, portTag));
+                end
+                
+                if matched
+                    fprintf(fidOut, '%% Found in %s (line %d) for tag %s:\n', mFiles(i).name, lineNum, portTag);
+                    fprintf(fidOut, '%s\n\n', line);
+                    matchCount = matchCount + 1;
+                    break;
+                end
+            end
+        end
+        fclose(fidIn);
+    end
+    fclose(fidOut);
+    
+    result = struct('OutputFile', outputFile, 'MatchCount', matchCount);
+end
