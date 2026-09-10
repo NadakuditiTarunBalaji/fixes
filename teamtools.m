@@ -27,10 +27,6 @@ if ~isempty(appFolder)
 end
 
 % ---- session log: log.txt in the current folder -------------------------
-% Every launch starts a FRESH log.txt (the previous one is overridden).
-% The MATLAB diary records EVERYTHING that reaches the command window
-% - engine output, warnings, errors, your own commands - and the app
-% log lines (logTo/logMany) are echoed there as well.
 logPath = fullfile(pwd, 'log.txt');
 prevDiaryOn = false;
 prevDiaryFile = '';
@@ -93,9 +89,8 @@ headerLabel.Layout.Column = 1;
 % Clear All on top: resets every input on all tabs
 clearAllTopBtn = uibutton(root, 'push', 'Text', 'Clear All', ...
     'FontSize', 11, 'ButtonPushedFcn', @clearAllData);
-safeTooltip(clearAllTopBtn, ['Resets EVERY input on all tabs: model ', ...
-    'lists, folders, names, options, loop breaker, and extract ', ...
-    'fields. The logs are kept.']);
+safeTooltip(clearAllTopBtn, ['Resets EVERY input on both tabs: model ', ...
+    'lists, folders, names, options, and loop breaker fields. The logs are kept.']);
 clearAllTopBtn.Layout.Row = 1;
 clearAllTopBtn.Layout.Column = 2;
 
@@ -294,7 +289,7 @@ safeTooltip(chkAutoDelay, ['Feedback signals (a bottom model feeding a ', ...
 chkAutoDelay.Layout.Row = 9;
 chkAutoDelay.Layout.Column = [4 6];
 
-% block spacing and subgrid for the layout gaps
+% Single master Block Spacing configuration row
 lblSpacing = uilabel(g1, 'Text', 'Block spacing:');
 lblSpacing.Layout.Row = 10;
 lblSpacing.Layout.Column = 1;
@@ -302,47 +297,16 @@ lblSpacing.Layout.Column = 1;
 spacingEdit = uieditfield(g1, 'numeric', ...
     'Value', 100, 'Limits', [55 1000], ...
     'RoundFractionalValues', 'on');
-safeTooltip(spacingEdit, ['Clear distance in points between newly placed ', ...
-    'blocks (From/Goto/Unit Delay to models and to each other). ', ...
-    'Minimum 55.']);
+safeTooltip(spacingEdit, ['Standard layout spacing base in points (Minimum 55). ', ...
+    'All tag and sub-block gaps automatically scale proportionally to keep your diagram aligned.']);
 spacingEdit.Layout.Row = 10;
 spacingEdit.Layout.Column = 2;
 
-% Layout gaps used by Generate - label/field pairs auto-flow left to right
-gapGrid = uigridlayout(g1, [1 8]);
-gapGrid.Layout.Row = 10;
-gapGrid.Layout.Column = [3 6];
-gapGrid.ColumnWidth = {76, '1x', 76, '1x', 74, '1x', 82, '1x'};
-gapGrid.Padding = [0 0 0 0];
-gapGrid.ColumnSpacing = 4;
-
-uilabel(gapGrid, 'Text', 'From-Model:');
-gapFromModelEdit = uieditfield(gapGrid, 'numeric', ...
-    'Value', getpref('teamtools', 'ArrFromModelGap', 100), ...
-    'Limits', [20 5000], 'RoundFractionalValues', 'on');
-safeTooltip(gapFromModelEdit, ['Gap between the FROM blocks and the ', ...
-    'subsystem, in points (default 100).']);
-
-uilabel(gapGrid, 'Text', 'Model-Goto:');
-gapModelGotoEdit = uieditfield(gapGrid, 'numeric', ...
-    'Value', getpref('teamtools', 'ArrModelGotoGap', 100), ...
-    'Limits', [20 5000], 'RoundFractionalValues', 'on');
-safeTooltip(gapModelGotoEdit, ['Gap between the subsystem and its GOTO ', ...
-    'blocks, in points (default 100).']);
-
-uilabel(gapGrid, 'Text', 'From-Delay:');
-gapFromDelayEdit = uieditfield(gapGrid, 'numeric', ...
-    'Value', getpref('teamtools', 'ArrFromToDelayGap', 40), ...
-    'Limits', [10 2000], 'RoundFractionalValues', 'on');
-safeTooltip(gapFromDelayEdit, ['Gap between a FROM block and the Unit ', ...
-    'Delay behind it, in points (default 40).']);
-
-uilabel(gapGrid, 'Text', 'Model-Model:');
-gapModelModelEdit = uieditfield(gapGrid, 'numeric', ...
-    'Value', getpref('teamtools', 'ArrModelToModelGap', 400), ...
-    'Limits', [50 20000], 'RoundFractionalValues', 'on');
-safeTooltip(gapModelModelEdit, ['Space between one subsystem and the ', ...
-    'next, in points (default 400).']);
+lblSpacingHint = uilabel(g1, ...
+    'Text', 'points base scale (all block gaps scale proportionally to prevent overlaps)', ...
+    'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
+lblSpacingHint.Layout.Row = 10;
+lblSpacingHint.Layout.Column = [3 6];
 
 previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
     'FontSize', 12, ...
@@ -639,12 +603,6 @@ end
 
 function bringAppToFront()
 %BRINGAPPTOFRONT Raise the app window after a native file dialog.
-%
-% uigetdir/uigetfile/uiputfile are native dialogs; when they close,
-% focus lands on the MATLAB desktop and the app hides behind it.
-% figure(app) raises the app window again (with a Visible fallback
-% for releases where that call is restricted).
-
 try
     drawnow;
     figure(app);
@@ -964,12 +922,6 @@ chkColor.Value = true;
 chkAutoDelay.Value = true;
 spacingEdit.Value = 100;
 
-% Reset layout gaps
-gapFromModelEdit.Value = 100;
-gapModelGotoEdit.Value = 100;
-gapFromDelayEdit.Value = 40;
-gapModelModelEdit.Value = 400;
-
 % --- Tab 1: loop breaker
 connModelEdit.Value = '';
 chkDelayFilter.Value = false;
@@ -1101,6 +1053,8 @@ end
 s.ColorBlocks = logical(chkColor.Value);
 s.AutoDelayFeedback = logical(chkAutoDelay.Value);
 s.BlockSpacing = spacingPoints();
+
+% Call the automatic proportional spacing logic
 spacingGapValues = spacingGaps();
 s.FromModelGap = spacingGapValues.FromModelGap;
 s.ModelGotoGap = spacingGapValues.ModelGotoGap;
@@ -1110,10 +1064,6 @@ end
 
 function spacing = spacingPoints()
 %SPACINGPOINTS Validated block spacing from the field (min 55 points).
-% NOTE: must stay NESTED inside teamtools (before its closing end):
-% it reads the spacing field, which the local helpers after that
-% end cannot see.
-
 try
     value = double(spacingEdit.Value);
 catch
@@ -1126,16 +1076,13 @@ spacing = round(value);
 end
 
 function gaps = spacingGaps()
-%SPACINGGAPS The four user spacing gaps (persisted in preferences).
-% NOTE: must stay NESTED inside teamtools (before its closing end):
-% it reads the gap edit fields, which the local helpers after that
-% end cannot see.
-
-gaps = struct( ...
-    'FromModelGap',   gapValue(gapFromModelEdit, 100, 'ArrFromModelGap', 20), ...
-    'ModelGotoGap',   gapValue(gapModelGotoEdit, 100, 'ArrModelGotoGap', 20), ...
-    'FromToDelayGap', gapValue(gapFromDelayEdit, 40, 'ArrFromToDelayGap', 10), ...
-    'ModelToModelGap', gapValue(gapModelModelEdit, 400, 'ArrModelToModelGap', 50));
+%SPACINGGAPS Auto-calculates all layout gaps proportionally from the user's master spacing base.
+    baseVal = spacingPoints();
+    gaps = struct( ...
+        'FromModelGap',   baseVal, ...                % 100% of base (default 100)
+        'ModelGotoGap',   baseVal, ...                % 100% of base (default 100)
+        'FromToDelayGap', round(baseVal * 0.40), ...  % 40% of base (default 40)
+        'ModelToModelGap', round(baseVal * 4.00));    % 400% of base (default 400)
 end
 
 function [folder, models, modelName, saveFolder] = validateTab1()
@@ -2528,7 +2475,7 @@ end
 if ~isempty(result.Notes)
     lines{end + 1} = 'Notes:';
     for noteIndex = 1:numel(result.Notes)
-        lines{end + 1} = ['  - ' noteIndex];
+        lines{end + 1} = ['  - ' result.Notes{noteIndex}];
     end
 end
 if isempty(result.Warnings)
