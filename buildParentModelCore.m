@@ -236,9 +236,9 @@ try
     % ---------------------------------------------------------------- Plan
     progressFcn(0.5, 'Planning connections...');
     inputConnected = cell(numModels, 1);
-    for modelIndex = 1:numModels
-        inputConnected{modelIndex} = false(numel(modelInfo(modelIndex).InputNames), 1);
-    end
+    % for modelIndex = 1:numModels
+    %     inputConnected{modelIndex} = false(numel(modelInfo(modelIndex).InputNames), 1);
+    % end
 
     internalConnections = result.InternalConnections;
     selfMatchNotes = {};
@@ -283,7 +283,7 @@ try
 
     flatOutputs = {};
     flatOwners = zeros(0, 1);
-    for modelIndex = 1:numRefModels
+    for modelIndex = 1:numModels
         outputs = modelInfo(modelIndex).OutputNames(:);
         flatOutputs = [flatOutputs; outputs]; %#ok<AGROW>
         flatOwners = [flatOwners; repmat(modelIndex, numel(outputs), 1)]; %#ok<AGROW>
