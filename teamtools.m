@@ -108,8 +108,8 @@ tab2 = uitab(tabs, 'Title', 'Extract Attributes');
 % =========================================================================
 %  TAB 1 - BUILD PARENT MODEL
 % =========================================================================
-g1 = uigridlayout(tab1, [18 6]);
-g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 24, 26, 24, 24, 48, 20, 36, 24, 24, 36, 24, '1x'};
+g1 = uigridlayout(tab1, [17 6]);
+g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 24, 26, 24, 48, 20, 36, 24, 24, 36, 24, '1x'};
 g1.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
 g1.Padding = [14 10 14 10];
 g1.RowSpacing = 6;
@@ -289,35 +289,16 @@ safeTooltip(chkAutoDelay, ['Feedback signals (a bottom model feeding a ', ...
 chkAutoDelay.Layout.Row = 9;
 chkAutoDelay.Layout.Column = [4 6];
 
-% Single master Block Spacing configuration row
-lblSpacing = uilabel(g1, 'Text', 'Block spacing:');
-lblSpacing.Layout.Row = 10;
-lblSpacing.Layout.Column = 1;
-
-spacingEdit = uieditfield(g1, 'numeric', ...
-    'Value', 100, 'Limits', [55 1000], ...
-    'RoundFractionalValues', 'on');
-safeTooltip(spacingEdit, ['Standard layout spacing base in points (Minimum 55). ', ...
-    'All tag and sub-block gaps automatically scale proportionally to keep your diagram aligned.']);
-spacingEdit.Layout.Row = 10;
-spacingEdit.Layout.Column = 2;
-
-lblSpacingHint = uilabel(g1, ...
-    'Text', 'points base scale (all block gaps scale proportionally to prevent overlaps)', ...
-    'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
-lblSpacingHint.Layout.Row = 10;
-lblSpacingHint.Layout.Column = [3 6];
-
 previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
     'FontSize', 12, ...
     'ButtonPushedFcn', @doPreview);
-previewBtn.Layout.Row = 11;
+previewBtn.Layout.Row = 10;
 previewBtn.Layout.Column = [2 3];
 
 generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
     'FontSize', 12, ...
     'FontWeight', 'bold', 'ButtonPushedFcn', @doGenerate);
-generateBtn.Layout.Row = 11;
+generateBtn.Layout.Row = 10;
 generateBtn.Layout.Column = [4 5];
 
 lblLoop = uilabel(g1, 'Text', ...
@@ -325,28 +306,28 @@ lblLoop = uilabel(g1, 'Text', ...
     '1) model name  2) Refresh list  3) pick the looping connection  ' ...
     '4) Insert Unit Delay'], ...
     'FontWeight', 'bold');
-lblLoop.Layout.Row = 12;
+lblLoop.Layout.Row = 11;
 lblLoop.Layout.Column = [1 6];
 
 connModelEdit = uieditfield(g1, 'text', ...
     'Placeholder', 'model name (filled after Generate)');
-connModelEdit.Layout.Row = 13;
+connModelEdit.Layout.Row = 12;
 connModelEdit.Layout.Column = [1 2];
 
 refreshConnBtn = uibutton(g1, 'push', 'Text', 'Refresh list', ...
     'FontSize', 11, ...
     'ButtonPushedFcn', @refreshConnections);
-refreshConnBtn.Layout.Row = 13;
+refreshConnBtn.Layout.Row = 12;
 refreshConnBtn.Layout.Column = 3;
 
 connDropDown = uidropdown(g1, 'Items', {'(no connections yet)'});
-connDropDown.Layout.Row = 13;
+connDropDown.Layout.Row = 12;
 connDropDown.Layout.Column = [4 5];
 
 insertDelayBtn = uibutton(g1, 'push', 'Text', 'Insert Unit Delay', ...
     'FontSize', 11, ...
     'Enable', 'off', 'ButtonPushedFcn', @insertDelay);
-insertDelayBtn.Layout.Row = 13;
+insertDelayBtn.Layout.Row = 12;
 insertDelayBtn.Layout.Column = 6;
 
 % filter for the connection list: show only connections with a delay
@@ -356,7 +337,7 @@ chkDelayFilter = uicheckbox(g1, ...
 safeTooltip(chkDelayFilter, ['Shows only the connections that already contain ', ...
     'a Unit Delay - handy for checking which feedback signals were ', ...
     'delayed automatically.']);
-chkDelayFilter.Layout.Row = 14;
+chkDelayFilter.Layout.Row = 13;
 chkDelayFilter.Layout.Column = [1 6];
 
 % second filter: escape hatch to see every connection at once
@@ -366,12 +347,12 @@ chkShowAll = uicheckbox(g1, ...
 safeTooltip(chkShowAll, ['Shows every listed connection, with or without a ', ...
     'Unit Delay. Default (both unticked): only the connections that ', ...
     'still NEED a Unit Delay.']);
-chkShowAll.Layout.Row = 15;
+chkShowAll.Layout.Row = 14;
 chkShowAll.Layout.Column = [1 6];
 
 lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', ...
     'FontWeight', 'bold');
-lblSignals.Layout.Row = 16;
+lblSignals.Layout.Row = 15;
 lblSignals.Layout.Column = [1 2];
 
 configureSignalsBtn = uibutton(g1, 'push', ...
@@ -384,42 +365,42 @@ safeTooltip(configureSignalsBtn, ['Works on the Subsystem block that is ', ...
     'dictionary when one is attached, otherwise the model workspace), ', ...
     'names the connecting lines, enables MustResolveToSignalObject, ', ...
     'and shows propagated signal names.']);
-configureSignalsBtn.Layout.Row = 16;
+configureSignalsBtn.Layout.Row = 15;
 configureSignalsBtn.Layout.Column = [3 4];
 
 lblSignalsHint = uilabel(g1, ...
     'Text', 'select a Subsystem in the model, then press', ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
-lblSignalsHint.Layout.Row = 16;
+lblSignalsHint.Layout.Row = 15;
 lblSignalsHint.Layout.Column = [5 6];
 
 % Configure Signals: which parts to process
 chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
 safeTooltip(chkCfgInports, ['Process the Subsystem''s Inport signals: ', ...
     'create/validate Simulink.Signal objects and name the lines.']);
-chkCfgInports.Layout.Row = 17;
+chkCfgInports.Layout.Row = 16;
 chkCfgInports.Layout.Column = [1 2];
 
 chkCfgOutports = uicheckbox(g1, 'Text', 'Outports', 'Value', true);
 safeTooltip(chkCfgOutports, ['Process the Subsystem''s Outport signals: ', ...
     'create/validate Simulink.Signal objects and name the lines.']);
-chkCfgOutports.Layout.Row = 17;
+chkCfgOutports.Layout.Row = 16;
 chkCfgOutports.Layout.Column = [3 4];
 
 chkCfgPropagation = uicheckbox(g1, 'Text', 'Propagation', 'Value', true);
 safeTooltip(chkCfgPropagation, 'Display the propagated signal names on the lines.');
-chkCfgPropagation.Layout.Row = 17;
+chkCfgPropagation.Layout.Row = 16;
 chkCfgPropagation.Layout.Column = 5;
 
 chkCfgResolver = uicheckbox(g1, 'Text', 'Resolver', 'Value', true);
 safeTooltip(chkCfgResolver, ['Enable "Signal name must resolve to signal ', ...
     'object" (MustResolveToSignalObject) on the named lines.']);
-chkCfgResolver.Layout.Row = 17;
+chkCfgResolver.Layout.Row = 16;
 chkCfgResolver.Layout.Column = 6;
 
 log1 = uitextarea(g1, 'Editable', 'off', ...
     'Value', {'Ready. Choose a models folder to begin.'});
-log1.Layout.Row = 18;
+log1.Layout.Row = 17;
 log1.Layout.Column = [1 6];
 
 % =========================================================================
@@ -920,7 +901,6 @@ connMethodDrop.Value = 'From/Goto blocks';
 layoutDrop.Value = 'Horizontal (side by side)';
 chkColor.Value = true;
 chkAutoDelay.Value = true;
-spacingEdit.Value = 100;
 
 % --- Tab 1: loop breaker
 connModelEdit.Value = '';
@@ -1054,7 +1034,7 @@ s.ColorBlocks = logical(chkColor.Value);
 s.AutoDelayFeedback = logical(chkAutoDelay.Value);
 s.BlockSpacing = spacingPoints();
 
-% Call the automatic proportional spacing logic
+% Standard spacing variables calculated using Golden Proportions
 spacingGapValues = spacingGaps();
 s.FromModelGap = spacingGapValues.FromModelGap;
 s.ModelGotoGap = spacingGapValues.ModelGotoGap;
@@ -1063,26 +1043,18 @@ s.ModelToModelGap = spacingGapValues.ModelToModelGap;
 end
 
 function spacing = spacingPoints()
-%SPACINGPOINTS Validated block spacing from the field (min 55 points).
-try
-    value = double(spacingEdit.Value);
-catch
-    value = 100;
-end
-if isnan(value) || value < 55
-    value = 55;
-end
-spacing = round(value);
+%SPACINGPOINTS Returns the standard spacing base value of 100 pt.
+spacing = 100;
 end
 
 function gaps = spacingGaps()
-%SPACINGGAPS Auto-calculates all layout gaps proportionally from the user's master spacing base.
+%SPACINGGAPS Calculates all alignment gaps proportionally from the 100 pt base.
     baseVal = spacingPoints();
     gaps = struct( ...
-        'FromModelGap',   baseVal, ...                % 100% of base (default 100)
-        'ModelGotoGap',   baseVal, ...                % 100% of base (default 100)
-        'FromToDelayGap', round(baseVal * 0.40), ...  % 40% of base (default 40)
-        'ModelToModelGap', round(baseVal * 4.00));    % 400% of base (default 400)
+        'FromModelGap',   baseVal, ...                % 100% of base (100 pt)
+        'ModelGotoGap',   baseVal, ...                % 100% of base (100 pt)
+        'FromToDelayGap', round(baseVal * 0.40), ...  % 40% of base (40 pt)
+        'ModelToModelGap', round(baseVal * 4.00));    % 400% of base (400 pt)
 end
 
 function [folder, models, modelName, saveFolder] = validateTab1()
