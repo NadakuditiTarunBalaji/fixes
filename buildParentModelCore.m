@@ -1,6 +1,6 @@
 function result = buildParentModelCore(modelsFolder, selectedModels, targetModelName, options)
 %BUILDPARENTMODELCORE Shared engine that generates a parent Simulink model
-% containing Model Reference blocks.
+% containing Model Reference blocks with automated dynamic alignment.
 
 % ---------------------------------------------------------------- Defaults
 if nargin < 4 || isempty(options)
@@ -47,7 +47,7 @@ fromModelGap = blockSpacing;
 if ~isempty(options.FromModelGap), fromModelGap = max(20, round(double(options.FromModelGap))); end
 modelGotoGap = blockSpacing;
 if ~isempty(options.ModelGotoGap), modelGotoGap = max(20, round(double(options.ModelGotoGap))); end
-fromToDelayGap = blockSpacing;
+fromToDelayGap = round(blockSpacing * 0.40);
 if ~isempty(options.FromToDelayGap), fromToDelayGap = max(10, round(double(options.FromToDelayGap))); end
 
 result = struct( ...
@@ -283,7 +283,7 @@ try
 
     flatOutputs = {};
     flatOwners = zeros(0, 1);
-    for modelIndex = 1:numModels
+    for modelIndex = 1:numRefModels
         outputs = modelInfo(modelIndex).OutputNames(:);
         flatOutputs = [flatOutputs; outputs]; %#ok<AGROW>
         flatOwners = [flatOwners; repmat(modelIndex, numel(outputs), 1)]; %#ok<AGROW>
@@ -668,7 +668,6 @@ try
             gotoBlockName = makeUniqueBlockName(targetModel, ['Goto_' tag]);
             globalGotoLeft = 85 + blockSpacing;
             
-            % EXACT 4-ELEMENT VECTOR FOR GOTO POSITION: [left, top, right, bottom]
             add_block('simulink/Signal Routing/Goto', [targetModel '/' gotoBlockName], 'GotoTag', tag, ...
                 'Position', [globalGotoLeft, signalY - 10, globalGotoLeft + commonFromGotoWidth, signalY + 10]);
             
@@ -814,15 +813,68 @@ try
         return;
     end
 
+    % ---------------------------------------------------- Wrapper Subsystem
     if options.WrapInSubsystem
         progressFcn(0.98, 'Wrapping contents in a subsystem...');
         try
             subsystemName = matlab.lang.makeValidName([targetModel '_Core']);
             diagramHandle = get_param(targetModel, 'Handle');
-            blockHandles = find_system(diagramHandle, 'SearchDepth', 1, 'Type', 'block');
-            Simulink.BlockDiagram.createSubsystem(blockHandles, 'Name', subsystemName);
-            result.SubsystemName = subsystemName;
-        catch
+            allRootBlocks = find_system(diagramHandle, 'SearchDepth', 1, 'Type', 'block');
+            
+            % Selectively filter out top-level parent ports from selection
+            wrapHandles = [];
+            for idx = 1:numel(allRootBlocks)
+                bType = get_param(allRootBlocks{idx}, 'BlockType');
+                if ~strcmp(bType, 'Inport') && ~strcmp(bType, 'Outport')
+                    wrapHandles = [wrapHandles; get_param(allRootBlocks{idx}, 'Handle')]; %#ok<AGROW>
+                end
+            end
+            
+            if ~isempty(wrapHandles)
+                subsystemHandle = Simulink.BlockDiagram.createSubsystem(wrapHandles, 'Name', subsystemName);
+                result.SubsystemName = subsystemName;
+                
+                % Compute port handles
+                ph = get_param(subsystemHandle, 'PortHandles');
+                nSubIn = numel(ph.Inport);
+                nSubOut = numel(ph.Outport);
+                
+                % Calculate clean dimensions proportional to the port count
+                subHeight = max(120, max(nSubIn, nSubOut) * 35 + 20);
+                subWidth = 240;
+                subX = 350;
+                subY = 150;
+                subPos = [subX, subY, subX + subWidth, subY + subHeight];
+                set_param(subsystemHandle, 'Position', subPos);
+                
+                % Align root level Inport blocks nicely in a column
+                rootInports = find_system(targetModel, 'SearchDepth', 1, 'BlockType', 'Inport');
+                for k = 1:numel(rootInports)
+                    portNum = str2double(get_param(rootInports{k}, 'Port'));
+                    if isnan(portNum), portNum = k; end
+                    
+                    if portNum <= nSubIn
+                        py = subPos(2) + round((subPos(4) - subPos(2)) * (portNum / (nSubIn + 1)));
+                        ip = [subPos(1) - fromModelGap - 100, py - 10, subPos(1) - fromModelGap - 65, py + 10];
+                        set_param(rootInports{k}, 'Position', ip);
+                    end
+                end
+                
+                % Align root level Outport blocks nicely in a column
+                rootOutports = find_system(targetModel, 'SearchDepth', 1, 'BlockType', 'Outport');
+                for k = 1:numel(rootOutports)
+                    portNum = str2double(get_param(rootOutports{k}, 'Port'));
+                    if isnan(portNum), portNum = k; end
+                    
+                    if portNum <= nSubOut
+                        py = subPos(2) + round((subPos(4) - subPos(2)) * (portNum / (nSubOut + 1)));
+                        op = [subPos(3) + modelGotoGap + 65, py - 10, subPos(3) + modelGotoGap + 100, py + 10];
+                        set_param(rootOutports{k}, 'Position', op);
+                    end
+                end
+            end
+        catch wrapErr
+            result.Warnings{end + 1} = ['Wrapping in subsystem failed: ' wrapErr.message];
         end
     end
 
