@@ -1,6 +1,6 @@
 function result = buildParentModelCore(modelsFolder, selectedModels, targetModelName, options)
-%BUILDPARENTMODELCORE Shared engine that generates a parent Simulink model
-% containing Model Reference blocks with automated dynamic alignment.
+%BUILDPARENTMODELCORE Generates a parent Simulink model containing Model Reference
+% blocks with automated dynamic alignment and optional subsystem wrapping.
 
 % ---------------------------------------------------------------- Defaults
 if nargin < 4 || isempty(options)
@@ -385,6 +385,24 @@ try
     end
     set_param(targetModel, 'SolverType', 'Fixed-step', 'Solver', 'FixedStepDiscrete');
 
+    % ------------------------------------------------ Setup Build Target
+    % If WrapInSubsystem is enabled, the container for all inner blocks is the Subsystem
+    wrapInSub = options.WrapInSubsystem;
+    subsystemName = '';
+    if wrapInSub
+        subsystemName = matlab.lang.makeValidName([targetModel '_Core']);
+        result.SubsystemName = subsystemName;
+        subBlockPath = [targetModel '/' subsystemName];
+        add_block('built-in/Subsystem', subBlockPath);
+        Simulink.SubSystem.deleteContents(subBlockPath); % Clean empty slate inside
+        containerSystem = subBlockPath;
+    else
+        containerSystem = targetModel;
+    end
+
+    globalInportColor = '[0.65,0.90,0.65]';
+    globalOutportColor = '[0.95,0.70,0.45]';
+
     if strcmp(connectionMethod, 'fromgoto')
         % ============================================================
         % FROM/GOTO MODE
@@ -464,7 +482,6 @@ try
             end
         end
 
-        % Collect unique output key list for global ports and duplicate warnings
         allOutputKeys = {};
         for modelIndex = 1:numModels
             allOutputKeys = [allOutputKeys; modelOutputKeys{modelIndex}]; %#ok<AGROW>
@@ -487,7 +504,6 @@ try
             end
         end
 
-        % Dynamic width ensures tag names are 100% readable without truncation (...)
         longestTagLength = 6;
         for tagIndex = 1:numel(usedTags)
             longestTagLength = max(longestTagLength, numel(usedTags{tagIndex}));
@@ -498,15 +514,14 @@ try
         uniformModelH = 140;
         for m = 1:numModels
             nP = max([numel(modelInfo(m).InputNames), numel(modelInfo(m).OutputNames), 1]);
-            uniformModelH = max(uniformModelH, (nP + 1) * 36); % 36px clean port pitch
+            uniformModelH = max(uniformModelH, (nP + 1) * 36);
         end
         
         fromGap = fromModelGap;
         gotoGap = modelGotoGap;
         delayGap = fromToDelayGap;
         
-        % DYNAMIC MODEL-TO-MODEL SPACING MATH (GUARANTEES ZERO OVERLAPS)
-        tagClearance = 120; % Generous 120pt air gap between model Goto and next model From
+        tagClearance = 120;
         minModelGap = gotoGap + commonFromGotoWidth + tagClearance + commonFromGotoWidth + fromGap + (delayGap + 40);
         if isempty(options.ModelToModelGap)
             modelToModelGap = max(400, minModelGap);
@@ -518,17 +533,12 @@ try
         end
         
         modelBaseY = 200;
-        
-        % FAR-LEFT CLEARANCE: Root Inport (50) + Width (35) + Gap (40) + Root Goto + 120pt Air Gap
         maxRootGotoW = 100;
         for sIdx = 1:numel(usedTags)
             maxRootGotoW = max(maxRootGotoW, ceil(numel(usedTags{sIdx}) * 8.5) + 30);
         end
         rootClearance = 120;
         modelBaseX = 50 + 35 + 40 + maxRootGotoW + rootClearance + commonFromGotoWidth + (delayGap + 40) + fromGap;
-        
-        globalInportColor = '[0.65,0.90,0.65]';
-        globalOutportColor = '[0.95,0.70,0.45]';
 
         modelBlockNames = cell(numModels, 1);
         xCursor = modelBaseX;
@@ -543,14 +553,14 @@ try
                 blockX = modelBaseX; blockY = yCursor;
                 yCursor = yCursor + uniformModelH + verticalModelGap;
             end
-            blockName = makeUniqueBlockName(targetModel, modelInfo(modelIndex).Name);
+            blockName = makeUniqueBlockName(containerSystem, modelInfo(modelIndex).Name);
             modelBlockNames{modelIndex} = blockName;
             modelInfo(modelIndex).BlockPos = [blockX, blockY, blockX + modelWidth, blockY + uniformModelH];
             
-            add_block('simulink/Ports & Subsystems/Model', [targetModel '/' blockName], ...
+            add_block('simulink/Ports & Subsystems/Model', [containerSystem '/' blockName], ...
                 'ModelName', modelInfo(modelIndex).Name, 'Position', modelInfo(modelIndex).BlockPos);
             if colorBlocks
-                set_param([targetModel '/' blockName], 'BackgroundColor', paletteColor(modelIndex));
+                set_param([containerSystem '/' blockName], 'BackgroundColor', paletteColor(modelIndex));
             end
             rightMostEdge = max(rightMostEdge, blockX + modelWidth + gotoGap + commonFromGotoWidth);
         end
@@ -559,7 +569,7 @@ try
 
         progressFcn(0.75, 'Reading the model ports...');
         for modelIndex = 1:numModels
-            portHandles = get_param([targetModel '/' modelBlockNames{modelIndex}], 'PortHandles');
+            portHandles = get_param([containerSystem '/' modelBlockNames{modelIndex}], 'PortHandles');
             inHandles = portHandles.Inport(:);
             outHandles = portHandles.Outport(:);
             modelInfo(modelIndex).InputHandles = inHandles;
@@ -594,7 +604,7 @@ try
                 fromCounter = 1;
                 if isKey(fromCountByTag, tag), fromCounter = fromCountByTag(tag) + 1; end
                 fromCountByTag(tag) = fromCounter;
-                fromName = makeUniqueBlockName(targetModel, sprintf('%s_From_%d', tag, fromCounter));
+                fromName = makeUniqueBlockName(containerSystem, sprintf('%s_From_%d', tag, fromCounter));
                 
                 selfFeed = isSelfFeeding(modelOutputKeys, modelIndex, key) && ...
                     isKey(firstProducerOrder, key) && firstProducerOrder(key) == modelIndex && ...
@@ -608,25 +618,25 @@ try
                 end
                 fromLeft = fromRight - commonFromGotoWidth;
                 
-                add_block('simulink/Signal Routing/From', [targetModel '/' fromName], 'GotoTag', tag, ...
+                add_block('simulink/Signal Routing/From', [containerSystem '/' fromName], 'GotoTag', tag, ...
                     'Position', [fromLeft, signalY - 10, fromRight, signalY + 10]);
                 if colorBlocks && isKey(firstProducerOrder, key)
-                    set_param([targetModel '/' fromName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
+                    set_param([containerSystem '/' fromName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
                 end
 
                 if inputIsFeedback
-                    delayName = makeUniqueBlockName(targetModel, sprintf('UnitDelay_%d', autoDelayCount + 1));
+                    delayName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
                     delayLeft = fromRight + fromToDelayGap;
-                    add_block('built-in/UnitDelay', [targetModel '/' delayName], ...
+                    add_block('built-in/UnitDelay', [containerSystem '/' delayName], ...
                         'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]);
                     if colorBlocks && isKey(firstProducerOrder, key)
-                        set_param([targetModel '/' delayName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
+                        set_param([containerSystem '/' delayName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
                     end
-                    add_line(targetModel, [fromName '/1'], [delayName '/1'], 'autorouting', 'off');
-                    add_line(targetModel, [delayName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
+                    add_line(containerSystem, [fromName '/1'], [delayName '/1'], 'autorouting', 'off');
+                    add_line(containerSystem, [delayName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
                     autoDelayCount = autoDelayCount + 1;
                 else
-                    add_line(targetModel, [fromName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
+                    add_line(containerSystem, [fromName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
                 end
             end
 
@@ -640,14 +650,14 @@ try
                 gotoCounter = 1;
                 if isKey(gotoCountByTag, tag), gotoCounter = gotoCountByTag(tag) + 1; end
                 gotoCountByTag(tag) = gotoCounter;
-                gotoName = makeUniqueBlockName(targetModel, sprintf('%s_Goto_%d', tag, gotoCounter));
+                gotoName = makeUniqueBlockName(containerSystem, sprintf('%s_Goto_%d', tag, gotoCounter));
                 
-                add_block('simulink/Signal Routing/Goto', [targetModel '/' gotoName], 'GotoTag', tag, ...
+                add_block('simulink/Signal Routing/Goto', [containerSystem '/' gotoName], 'GotoTag', tag, ...
                     'Position', [gotoLeft, signalY - 10, gotoLeft + commonFromGotoWidth, signalY + 10]);
                 if colorBlocks
-                    set_param([targetModel '/' gotoName], 'BackgroundColor', paletteColor(modelIndex));
+                    set_param([containerSystem '/' gotoName], 'BackgroundColor', paletteColor(modelIndex));
                 end
-                add_line(targetModel, sprintf('%s/%d', modelBlockNames{modelIndex}, outputIndex), [gotoName '/1'], 'autorouting', 'off');
+                add_line(containerSystem, sprintf('%s/%d', modelBlockNames{modelIndex}, outputIndex), [gotoName '/1'], 'autorouting', 'off');
             end
         end
 
@@ -659,19 +669,19 @@ try
             key = globalInputKeyList{g};
             tag = tagOf(key);
             signalY = 50 + g * 36;
-            inBlockName = makeUniqueBlockName(targetModel, tag);
+            inBlockName = makeUniqueBlockName(containerSystem, tag);
             
-            add_block('simulink/Sources/In1', [targetModel '/' inBlockName], 'Port', num2str(g), ...
+            add_block('simulink/Sources/In1', [containerSystem '/' inBlockName], 'Port', num2str(g), ...
                 'Position', [50, signalY - 10, 85, signalY + 10]);
-            if colorBlocks, set_param([targetModel '/' inBlockName], 'BackgroundColor', globalInportColor); end
+            if colorBlocks, set_param([containerSystem '/' inBlockName], 'BackgroundColor', globalInportColor); end
             
-            gotoBlockName = makeUniqueBlockName(targetModel, ['Goto_' tag]);
+            gotoBlockName = makeUniqueBlockName(containerSystem, ['Goto_' tag]);
             globalGotoLeft = 85 + blockSpacing;
             
-            add_block('simulink/Signal Routing/Goto', [targetModel '/' gotoBlockName], 'GotoTag', tag, ...
+            add_block('simulink/Signal Routing/Goto', [containerSystem '/' gotoBlockName], 'GotoTag', tag, ...
                 'Position', [globalGotoLeft, signalY - 10, globalGotoLeft + commonFromGotoWidth, signalY + 10]);
             
-            add_line(targetModel, [inBlockName '/1'], [gotoBlockName '/1'], 'autorouting', 'off');
+            add_line(containerSystem, [inBlockName '/1'], [gotoBlockName '/1'], 'autorouting', 'off');
         end
 
         globalFromX = rightMostEdge + max(300, 2 * blockSpacing + 100);
@@ -682,19 +692,19 @@ try
             key = uniqueOutputKeyList{g};
             tag = tagOf(key);
             signalY = 50 + g * 36;
-            fromBlockName = makeUniqueBlockName(targetModel, ['From_' tag]);
+            fromBlockName = makeUniqueBlockName(containerSystem, ['From_' tag]);
             
-            add_block('simulink/Signal Routing/From', [targetModel '/' fromBlockName], 'GotoTag', tag, ...
+            add_block('simulink/Signal Routing/From', [containerSystem '/' fromBlockName], 'GotoTag', tag, ...
                 'Position', [globalFromX, signalY - 10, globalFromX + commonFromGotoWidth, signalY + 10]);
             if colorBlocks && isKey(firstProducerOrder, key)
-                set_param([targetModel '/' fromBlockName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
+                set_param([containerSystem '/' fromBlockName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
             end
             
-            outBlockName = makeUniqueBlockName(targetModel, tag);
-            add_block('simulink/Sinks/Out1', [targetModel '/' outBlockName], 'Port', num2str(g), ...
+            outBlockName = makeUniqueBlockName(containerSystem, tag);
+            add_block('simulink/Sinks/Out1', [containerSystem '/' outBlockName], 'Port', num2str(g), ...
                 'Position', [globalOutX, signalY - 10, globalOutX + 35, signalY + 10]);
-            if colorBlocks, set_param([targetModel '/' outBlockName], 'BackgroundColor', globalOutportColor); end
-            add_line(targetModel, [fromBlockName '/1'], [outBlockName '/1'], 'autorouting', 'off');
+            if colorBlocks, set_param([containerSystem '/' outBlockName], 'BackgroundColor', globalOutportColor); end
+            add_line(containerSystem, [fromBlockName '/1'], [outBlockName '/1'], 'autorouting', 'off');
 
             prodIndex = 1;
             if isKey(firstProducerOrder, key), prodIndex = firstProducerOrder(key); end
@@ -719,8 +729,8 @@ try
         
         for modelIndex = 1:numModels
             maxPorts = max([numel(modelInfo(modelIndex).InputNames), numel(modelInfo(modelIndex).OutputNames), 1]);
-            cH = max(160, maxPorts * 35);
-            blockName = makeUniqueBlockName(targetModel, modelInfo(modelIndex).Name);
+            cH = max(160, maxPorts * 36);
+            blockName = makeUniqueBlockName(containerSystem, modelInfo(modelIndex).Name);
             modelBlockNames{modelIndex} = blockName;
 
             if strcmp(layoutStyle, 'horizontal')
@@ -731,9 +741,9 @@ try
                 currentModelY = currentModelY + cH + 100;
             end
 
-            add_block('simulink/Ports & Subsystems/Model', [targetModel '/' blockName], ...
+            add_block('simulink/Ports & Subsystems/Model', [containerSystem '/' blockName], ...
                 'ModelName', modelInfo(modelIndex).Name, 'Position', bPos);
-            if colorBlocks, set_param([targetModel '/' blockName], 'BackgroundColor', paletteColor(modelIndex)); end
+            if colorBlocks, set_param([containerSystem '/' blockName], 'BackgroundColor', paletteColor(modelIndex)); end
             modelTopBottom(modelIndex, :) = [bPos(2), bPos(4)];
         end
 
@@ -741,7 +751,7 @@ try
         set_param(targetModel, 'SimulationCommand', 'update');
 
         for modelIndex = 1:numModels
-            pH = get_param([targetModel '/' modelBlockNames{modelIndex}], 'PortHandles');
+            pH = get_param([containerSystem '/' modelBlockNames{modelIndex}], 'PortHandles');
             modelInfo(modelIndex).InputHandles = pH.Inport(:);
             modelInfo(modelIndex).OutputHandles = pH.Outport(:);
         end
@@ -755,53 +765,123 @@ try
             dstH = modelInfo(conn.DstModelIndex).InputHandles(conn.DstPortIndex);
             
             if autoDelayFeedback && (conn.SrcModelIndex >= conn.DstModelIndex)
-                srcPos = get_param([targetModel '/' modelBlockNames{conn.SrcModelIndex}], 'Position');
+                srcPos = get_param([containerSystem '/' modelBlockNames{conn.SrcModelIndex}], 'Position');
                 dstPos = get_param(dstH, 'Position');
                 dLeft = round(dstPos(1)) - 40 - blockSpacing;
                 if dLeft < srcPos(3) + blockSpacing, dLeft = round((srcPos(3) + dstPos(1)) / 2) - 20; end
                 dY = round(dstPos(2));
-                dName = makeUniqueBlockName(targetModel, sprintf('UnitDelay_%d', autoDelayCount + 1));
-                add_block('built-in/UnitDelay', [targetModel '/' dName], 'Position', [dLeft, dY - 10, dLeft + 40, dY + 10]);
-                dPorts = get_param([targetModel '/' dName], 'PortHandles');
-                addLineRouted(targetModel, routeMode, srcH, dPorts.Inport(1));
-                addLineRouted(targetModel, routeMode, dPorts.Outport(1), dstH);
+                dName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
+                add_block('built-in/UnitDelay', [containerSystem '/' dName], 'Position', [dLeft, dY - 10, dLeft + 40, dY + 10]);
+                dPorts = get_param([containerSystem '/' dName], 'PortHandles');
+                addLineRouted(containerSystem, routeMode, srcH, dPorts.Inport(1));
+                addLineRouted(containerSystem, routeMode, dPorts.Outport(1), dstH);
                 autoDelayCount = autoDelayCount + 1;
             else
-                addLineRouted(targetModel, routeMode, srcH, dstH);
+                addLineRouted(containerSystem, routeMode, srcH, dstH);
             end
         end
 
         if ~isempty(rootInputs)
-            order = 1:numel(rootInputs); spacedYs = (1:numel(rootInputs))' * 45 + 50;
-            for pos = 1:numel(order)
-                iIdx = order(pos);
-                iName = makeUniqueBlockName(targetModel, rootInputs(iIdx).Name);
-                add_block('simulink/Sources/In1', [targetModel '/' iName], 'Port', num2str(pos), ...
-                    'Position', [50, round(spacedYs(pos)), 50 + 35, round(spacedYs(pos)) + 20]);
-                rH = get_param([targetModel '/' iName], 'PortHandles'); rH = rH.Outport;
-                for d = 1:numel(rootInputs(iIdx).DestinationModelIndexes)
-                    mIdx = rootInputs(iIdx).DestinationModelIndexes(d);
-                    pIdx = rootInputs(iIdx).DestinationPortIndexes(d);
-                    addLineRouted(targetModel, routeMode, rH, modelInfo(mIdx).InputHandles(pIdx));
+            for pos = 1:numel(rootInputs)
+                mIdx = rootInputs(pos).DestinationModelIndexes(1);
+                pIdx = rootInputs(pos).DestinationPortIndexes(1);
+                firstDstH = modelInfo(mIdx).InputHandles(pIdx);
+                targetPortPos = get_param(firstDstH, 'Position');
+                iY = targetPortPos(2);
+                
+                iName = makeUniqueBlockName(containerSystem, rootInputs(pos).Name);
+                add_block('simulink/Sources/In1', [containerSystem '/' iName], 'Port', num2str(pos), ...
+                    'Position', [50, iY - 10, 85, iY + 10]);
+                if colorBlocks, set_param([containerSystem '/' iName], 'BackgroundColor', globalInportColor); end
+                
+                rH = get_param([containerSystem '/' iName], 'PortHandles'); rH = rH.Outport;
+                for d = 1:numel(rootInputs(pos).DestinationModelIndexes)
+                    mIdx = rootInputs(pos).DestinationModelIndexes(d);
+                    pIdx = rootInputs(pos).DestinationPortIndexes(d);
+                    addLineRouted(containerSystem, routeMode, rH, modelInfo(mIdx).InputHandles(pIdx));
                 end
             end
         end
 
         if ~isempty(rootOutputs)
-            order = 1:numel(rootOutputs); spacedYs = (1:numel(rootOutputs))' * 45 + 50;
-            for pos = 1:numel(order)
-                oIdx = order(pos);
-                oName = makeUniqueBlockName(targetModel, rootOutputs(oIdx).Name);
-                add_block('simulink/Sinks/Out1', [targetModel '/' oName], 'Port', num2str(pos), ...
-                    'Position', [outportX, round(spacedYs(pos)), outportX + 35, round(spacedYs(pos)) + 20]);
-                sPort = sprintf('%s/%d', modelBlockNames{rootOutputs(oIdx).SourceModelIndex}, rootOutputs(oIdx).SourcePortIndex);
+            for pos = 1:numel(rootOutputs)
+                sModelIdx = rootOutputs(pos).SourceModelIndex;
+                sPortIdx = rootOutputs(pos).SourcePortIndex;
+                srcPortH = modelInfo(sModelIdx).OutputHandles(sPortIdx);
+                srcPortPos = get_param(srcPortH, 'Position');
+                oY = srcPortPos(2);
+
+                oName = makeUniqueBlockName(containerSystem, rootOutputs(pos).Name);
+                add_block('simulink/Sinks/Out1', [containerSystem '/' oName], 'Port', num2str(pos), ...
+                    'Position', [outportX, oY - 10, outportX + 35, oY + 10]);
+                if colorBlocks, set_param([containerSystem '/' oName], 'BackgroundColor', globalOutportColor); end
+                
+                sPort = sprintf('%s/%d', modelBlockNames{sModelIdx}, sPortIdx);
                 dPort = sprintf('%s/1', oName);
-                addLineRouted(targetModel, routeMode, sPort, dPort);
+                addLineRouted(containerSystem, routeMode, sPort, dPort);
             end
         end
     end
 
-    progressFcn(0.97, 'Updating diagram...');
+    % ------------------------------------------------ Outer Subsystem Setup
+    if wrapInSub
+        progressFcn(0.95, 'Aligning Root Inports and Outports to Subsystem...');
+        set_param(targetModel, 'SimulationCommand', 'update');
+        
+        subBlockPath = [targetModel '/' subsystemName];
+        ph = get_param(subBlockPath, 'PortHandles');
+        nSubIn = numel(ph.Inport);
+        nSubOut = numel(ph.Outport);
+        
+        subHeight = max(160, (max([nSubIn, nSubOut, 1]) + 1) * 38);
+        subWidth = 260;
+        subX = 450;
+        subY = 150;
+        subPos = [subX, subY, subX + subWidth, subY + subHeight];
+        set_param(subBlockPath, 'Position', subPos);
+        if colorBlocks
+            set_param(subBlockPath, 'BackgroundColor', '[0.85,0.92,1.00]');
+        end
+        
+        set_param(targetModel, 'SimulationCommand', 'update');
+        ph = get_param(subBlockPath, 'PortHandles');
+        
+        % Align Root Inports straight with Subsystem input pins
+        for k = 1:numel(ph.Inport)
+            pPos = get_param(ph.Inport(k), 'Position');
+            pY = pPos(2);
+            inName = '';
+            if strcmp(connectionMethod, 'fromgoto')
+                inName = tagOf(globalInputKeyList{k});
+            else
+                inName = rootInputs(k).Name;
+            end
+            rootInName = makeUniqueBlockName(targetModel, inName);
+            add_block('simulink/Sources/In1', [targetModel '/' rootInName], 'Port', num2str(k), ...
+                'Position', [subX - 180, pY - 10, subX - 145, pY + 10]);
+            if colorBlocks, set_param([targetModel '/' rootInName], 'BackgroundColor', globalInportColor); end
+            add_line(targetModel, [rootInName '/1'], sprintf('%s/%d', subsystemName, k), 'autorouting', 'off');
+        end
+        
+        % Align Root Outports straight with Subsystem output pins
+        for k = 1:numel(ph.Outport)
+            pPos = get_param(ph.Outport(k), 'Position');
+            pY = pPos(2);
+            outName = '';
+            if strcmp(connectionMethod, 'fromgoto')
+                outName = result.RootOutputs(k).Name;
+            else
+                outName = rootOutputs(k).Name;
+            end
+            rootOutName = makeUniqueBlockName(targetModel, outName);
+            add_block('simulink/Sinks/Out1', [targetModel '/' rootOutName], 'Port', num2str(k), ...
+                'Position', [subX + subWidth + 145, pY - 10, subX + subWidth + 180, pY + 10]);
+            if colorBlocks, set_param([targetModel '/' rootOutName], 'BackgroundColor', globalOutportColor); end
+            add_line(targetModel, sprintf('%s/%d', subsystemName, k), [rootOutName '/1'], 'autorouting', 'off');
+        end
+    end
+
+    progressFcn(0.98, 'Updating diagram...');
     try set_param(targetModel, 'SimulationCommand', 'update'); catch, end
 
     if cancelFcn()
@@ -811,79 +891,6 @@ try
         end
         if options.CloseReferencedModels, closeLoadedModels(loadedByUs); end
         return;
-    end
-
-    % ---------------------------------------------------- Wrapper Subsystem
-    if options.WrapInSubsystem
-        progressFcn(0.98, 'Wrapping contents in a subsystem...');
-        try
-            subsystemName = matlab.lang.makeValidName([targetModel '_Core']);
-            
-            % Find all top-level blocks in the model
-            allRootBlocks = find_system(targetModel, 'SearchDepth', 1, 'Type', 'block');
-            if ~iscell(allRootBlocks), allRootBlocks = num2cell(allRootBlocks); end
-            
-            % Selectively filter out top-level parent ports from selection
-            wrapHandles = [];
-            for idx = 1:numel(allRootBlocks)
-                blk = allRootBlocks{idx};
-                if isequal(blk, targetModel) || isequal(blk, get_param(targetModel, 'Handle'))
-                    continue;
-                end
-                bType = get_param(blk, 'BlockType');
-                if ~strcmp(bType, 'Inport') && ~strcmp(bType, 'Outport')
-                    wrapHandles(end + 1, 1) = get_param(blk, 'Handle'); %#ok<AGROW>
-                end
-            end
-            
-            if ~isempty(wrapHandles)
-                subsystemHandle = Simulink.BlockDiagram.createSubsystem(wrapHandles, 'Name', subsystemName);
-                result.SubsystemName = subsystemName;
-                
-                % Compute port handles
-                ph = get_param(subsystemHandle, 'PortHandles');
-                nSubIn = numel(ph.Inport);
-                nSubOut = numel(ph.Outport);
-                
-                % Calculate clean dimensions proportional to the port count
-                subHeight = max(120, max(nSubIn, nSubOut) * 35 + 20);
-                subWidth = 240;
-                subX = 350;
-                subY = 150;
-                subPos = [subX, subY, subX + subWidth, subY + subHeight];
-                set_param(subsystemHandle, 'Position', subPos);
-                
-                % Align root level Inport blocks nicely in a column
-                rootInports = find_system(targetModel, 'SearchDepth', 1, 'BlockType', 'Inport');
-                if ~iscell(rootInports), rootInports = num2cell(rootInports); end
-                for k = 1:numel(rootInports)
-                    portNum = str2double(get_param(rootInports{k}, 'Port'));
-                    if isnan(portNum), portNum = k; end
-                    
-                    if portNum <= nSubIn
-                        py = subPos(2) + round((subPos(4) - subPos(2)) * (portNum / (nSubIn + 1)));
-                        ip = [subPos(1) - fromModelGap - 100, py - 10, subPos(1) - fromModelGap - 65, py + 10];
-                        set_param(rootInports{k}, 'Position', ip);
-                    end
-                end
-                
-                % Align root level Outport blocks nicely in a column
-                rootOutports = find_system(targetModel, 'SearchDepth', 1, 'BlockType', 'Outport');
-                if ~iscell(rootOutports), rootOutports = num2cell(rootOutports); end
-                for k = 1:numel(rootOutports)
-                    portNum = str2double(get_param(rootOutports{k}, 'Port'));
-                    if isnan(portNum), portNum = k; end
-                    
-                    if portNum <= nSubOut
-                        py = subPos(2) + round((subPos(4) - subPos(2)) * (portNum / (nSubOut + 1)));
-                        op = [subPos(3) + modelGotoGap + 65, py - 10, subPos(3) + modelGotoGap + 100, py + 10];
-                        set_param(rootOutports{k}, 'Position', op);
-                    end
-                end
-            end
-        catch wrapErr
-            result.Warnings{end + 1} = ['Wrapping in subsystem failed: ' wrapErr.message];
-        end
     end
 
     progressFcn(0.99, 'Saving...');
