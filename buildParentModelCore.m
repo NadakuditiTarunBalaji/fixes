@@ -236,9 +236,9 @@ try
     % ---------------------------------------------------------------- Plan
     progressFcn(0.5, 'Planning connections...');
     inputConnected = cell(numModels, 1);
-    % for modelIndex = 1:numModels
-    %     inputConnected{modelIndex} = false(numel(modelInfo(modelIndex).InputNames), 1);
-    % end
+    for modelIndex = 1:numModels
+        inputConnected{modelIndex} = false(numel(modelInfo(modelIndex).InputNames), 1);
+    end
 
     internalConnections = result.InternalConnections;
     selfMatchNotes = {};
@@ -818,15 +818,21 @@ try
         progressFcn(0.98, 'Wrapping contents in a subsystem...');
         try
             subsystemName = matlab.lang.makeValidName([targetModel '_Core']);
-            diagramHandle = get_param(targetModel, 'Handle');
-            allRootBlocks = find_system(diagramHandle, 'SearchDepth', 1, 'Type', 'block');
+            
+            % Find all top-level blocks in the model
+            allRootBlocks = find_system(targetModel, 'SearchDepth', 1, 'Type', 'block');
+            if ~iscell(allRootBlocks), allRootBlocks = num2cell(allRootBlocks); end
             
             % Selectively filter out top-level parent ports from selection
             wrapHandles = [];
             for idx = 1:numel(allRootBlocks)
-                bType = get_param(allRootBlocks{idx}, 'BlockType');
+                blk = allRootBlocks{idx};
+                if isequal(blk, targetModel) || isequal(blk, get_param(targetModel, 'Handle'))
+                    continue;
+                end
+                bType = get_param(blk, 'BlockType');
                 if ~strcmp(bType, 'Inport') && ~strcmp(bType, 'Outport')
-                    wrapHandles = [wrapHandles; get_param(allRootBlocks{idx}, 'Handle')]; %#ok<AGROW>
+                    wrapHandles(end + 1, 1) = get_param(blk, 'Handle'); %#ok<AGROW>
                 end
             end
             
@@ -849,6 +855,7 @@ try
                 
                 % Align root level Inport blocks nicely in a column
                 rootInports = find_system(targetModel, 'SearchDepth', 1, 'BlockType', 'Inport');
+                if ~iscell(rootInports), rootInports = num2cell(rootInports); end
                 for k = 1:numel(rootInports)
                     portNum = str2double(get_param(rootInports{k}, 'Port'));
                     if isnan(portNum), portNum = k; end
@@ -862,6 +869,7 @@ try
                 
                 % Align root level Outport blocks nicely in a column
                 rootOutports = find_system(targetModel, 'SearchDepth', 1, 'BlockType', 'Outport');
+                if ~iscell(rootOutports), rootOutports = num2cell(rootOutports); end
                 for k = 1:numel(rootOutports)
                     portNum = str2double(get_param(rootOutports{k}, 'Port'));
                     if isnan(portNum), portNum = k; end
@@ -941,21 +949,26 @@ end
 function names = orderedPortNames(blocks, kind)
 names = {};
 if isempty(blocks), return; end
+if ~iscell(blocks), blocks = num2cell(blocks); end
+blocks = blocks(:);
 portNumbers = zeros(numel(blocks), 1);
 for blockIndex = 1:numel(blocks)
-    portNumber = str2double(get_param(blocks(blockIndex), 'Port'));
+    targetBlock = blocks{blockIndex};
+    portNumber = str2double(get_param(targetBlock, 'Port'));
     if isnan(portNumber), error('buildParentModelCore:BadPortNumber', 'Invalid port number.'); end
     portNumbers(blockIndex) = portNumber;
 end
 [~, order] = sort(portNumbers);
 sortedBlocks = blocks(order);
-blockNames = get_param(sortedBlocks, 'Name');
-if ischar(blockNames), blockNames = {blockNames}; end
-blockNames = blockNames(:);
-for blockIndex = 1:numel(blockNames)
-    if isempty(strtrim(blockNames{blockIndex}))
-        blockNames{blockIndex} = sprintf('%s%d', kind, portNumbers(order(blockIndex)));
+blockNames = cell(numel(sortedBlocks), 1);
+for blockIndex = 1:numel(sortedBlocks)
+    bName = get_param(sortedBlocks{blockIndex}, 'Name');
+    if iscell(bName), bName = bName{1}; end
+    bName = char(bName);
+    if isempty(strtrim(bName))
+        bName = sprintf('%s%d', kind, portNumbers(order(blockIndex)));
     end
+    blockNames{blockIndex} = bName;
 end
 names = blockNames;
 end
