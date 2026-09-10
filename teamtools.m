@@ -4,20 +4,33 @@ function teamtools
 %   teamtools
 %
 % Opens a single window with two tabs:
-%   1. Build Parent Model  - Generate a parent model from referenced
-%      models with automatic dynamic layout, zero overlaps, and loop breaker.
-%   2. Extract Attributes  - Collect attribute records from .m files
+%   1. Build Parent Model  - generate a parent model from referenced
+%      models (preview first), with a search box that filters the
+%      available-models list, and an optional loop breaker that
+%      inserts a Unit Delay on a chosen BACKWARD connection
+%      (bottom->top / right->left); forward connections are never
+%      listed. The loop breaker is the manual fallback for when
+%      Auto insert Unit Delays is unchecked.
+%   2. Extract Attributes  - collect attribute records from .m files
 %      using a selected subsystem's port names as search tags.
+%
+% All heavy lifting is done by shared engines (buildParentModelCore.m,
+% extractAttributesCore.m), which are also used by the command-line
+% tools - a fix in one place fixes every front-end.
 %
 % Requirements: MATLAB R2020a or newer with Simulink.
 
-% ---- Make sure shared engines are reachable --------------------------
+% ---- make sure the shared engines are reachable --------------------------
 appFolder = fileparts(mfilename('fullpath'));
 if ~isempty(appFolder)
     addpath(appFolder);
 end
 
-% ---- Session log: log.txt in current folder -------------------------
+% ---- session log: log.txt in the current folder -------------------------
+% Every launch starts a FRESH log.txt (the previous one is overridden).
+% The MATLAB diary records EVERYTHING that reaches the command window
+% - engine output, warnings, errors, your own commands - and the app
+% log lines (logTo/logMany) are echoed there as well.
 logPath = fullfile(pwd, 'log.txt');
 prevDiaryOn = false;
 prevDiaryFile = '';
@@ -30,7 +43,7 @@ try
         delete(logPath);
     catch
     end
-    fid = fopen(logPath, 'w');
+    fid = fopen(logPath, 'w');   % truncate even if delete failed
     if fid ~= -1
         fclose(fid);
     end
@@ -39,24 +52,28 @@ try
         '(command window, warnings and errors all land in log.txt) ', ...
         '===\n'], char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
 catch
+    % logging must never keep the app from starting
 end
 
+% remember the session's Simulink cache folder (where .slxc files
+% land - the current folder by default) so Generate can point it at
+% the destination and the app can restore it on close
 try
     origCacheFolder = char(get_param(0, 'CacheFolder'));
 catch
     origCacheFolder = '';
 end
 
-% ---- Shared state ---------------------------------------------------------
+% ---- shared state ---------------------------------------------------------
 state = struct( ...
-    'AvailableNames',    {{}}, ...
-    'AvailableLabels',   {{}}, ...
-    'AvailableFilter',   '', ...
-    'Connections',       {{}}, ...
+    'AvailableNames',    {{}}, ...   % model names matching the available list
+    'AvailableLabels',   {{}}, ...   % list labels without the [added] marker
+    'AvailableFilter',   '', ...     % search text applied to the available list
+    'Connections',       {{}}, ...   % connection structs for the loop breaker
     'LastGeneratedModel', '', ...
     'ExtractOutput',     '');
 
-% ---- Window ---------------------------------------------------------------
+% ---- window ---------------------------------------------------------------
 app = uifigure('Name', 'Simulink Team Tools', ...
     'Position', centeredPosition(1020, 700));
 app.CloseRequestFcn = @onAppClose;
@@ -73,10 +90,12 @@ headerLabel = uilabel(root, ...
 headerLabel.Layout.Row = 1;
 headerLabel.Layout.Column = 1;
 
-% Clear All on top
+% Clear All on top: resets every input on all tabs
 clearAllTopBtn = uibutton(root, 'push', 'Text', 'Clear All', ...
     'FontSize', 11, 'ButtonPushedFcn', @clearAllData);
-safeTooltip(clearAllTopBtn, 'Resets inputs across both tabs.');
+safeTooltip(clearAllTopBtn, ['Resets EVERY input on all tabs: model ', ...
+    'lists, folders, names, options, loop breaker, and extract ', ...
+    'fields. The logs are kept.']);
 clearAllTopBtn.Layout.Row = 1;
 clearAllTopBtn.Layout.Column = 2;
 
@@ -102,8 +121,8 @@ g1.RowSpacing = 6;
 g1.ColumnSpacing = 8;
 
 hint1 = uilabel(g1, ...
-    'Text', ['1) Choose models folder    2) Add models in order ' ...
-    '   3) Preview    4) Generate (Auto-Layout Enabled)'], ...
+    'Text', ['1) Choose the models folder    2) Add models in the order ' ...
+    'they should appear    3) Preview    4) Generate'], ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
 hint1.Layout.Row = 1;
 hint1.Layout.Column = [1 6];
@@ -114,13 +133,14 @@ lblModelsFolder.Layout.Column = 1;
 
 modelsFolderEdit = uieditfield(g1, 'text', ...
     'Value', getpref('teamtools', 'ModelsFolder', ''), ...
-    'Placeholder', 'Folder containing .slx/.mdl models', ...
+    'Placeholder', 'Folder that contains the .slx/.mdl models', ...
     'ValueChangedFcn', @onModelsFolderChanged);
 modelsFolderEdit.Layout.Row = 2;
 modelsFolderEdit.Layout.Column = [2 5];
 
 browseModelsBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
-    'FontSize', 11, 'ButtonPushedFcn', @browseModelsFolder);
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @browseModelsFolder);
 browseModelsBtn.Layout.Row = 2;
 browseModelsBtn.Layout.Column = 6;
 
@@ -128,19 +148,26 @@ lblAvail = uilabel(g1, 'Text', 'Available models:', 'FontWeight', 'bold');
 lblAvail.Layout.Row = 3;
 lblAvail.Layout.Column = 1;
 
+% search box: filters the available-models list while you type
 filterEdit = uieditfield(g1, 'text', ...
     'Placeholder', 'Type to filter...', ...
     'ValueChangedFcn', @onAvailableFilterChanged);
 filterEdit.Layout.Row = 3;
 filterEdit.Layout.Column = 2;
+safeTooltip(filterEdit, ['Type part of a model or subfolder name and ', ...
+    'press Enter to shorten the list; clear the box and press Enter ', ...
+    'to show every model again.']);
 
-lblSel = uilabel(g1, 'Text', 'Selected models (order matters):', 'FontWeight', 'bold');
+lblSel = uilabel(g1, 'Text', 'Selected models (order matters):', ...
+    'FontWeight', 'bold');
 lblSel.Layout.Row = 3;
 lblSel.Layout.Column = [4 6];
 
 availableList = uilistbox(g1);
 availableList.Layout.Row = 4;
 availableList.Layout.Column = [1 2];
+safeTooltip(availableList, ...
+    'Ctrl+click or Shift+click to select several models at once');
 
 btnGrid = uigridlayout(g1, [6 1]);
 btnGrid.Layout.Row = 4;
@@ -148,17 +175,38 @@ btnGrid.Layout.Column = 3;
 btnGrid.Padding = [2 2 2 2];
 btnGrid.RowSpacing = 5;
 
-addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', 'FontSize', 11, 'ButtonPushedFcn', @addModel);
-addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', 'FontSize', 11, 'ButtonPushedFcn', @addAllModels);
-removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', 'FontSize', 11, 'ButtonPushedFcn', @removeModel);
-clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', 'FontSize', 11, 'ButtonPushedFcn', @clearSelectedModels);
-upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', 'FontSize', 11, 'ButtonPushedFcn', @moveModelUp);
-downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down', 'FontSize', 11, 'ButtonPushedFcn', @moveModelDown);
+addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @addModel);
+addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @addAllModels);
+safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
+    'when a search filter is active, only the matching models ', ...
+    'are added.']);
+removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @removeModel);
+clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @clearSelectedModels);
+safeTooltip(clearListBtn, ['Empties the selected-models list (the ordered ', ...
+    'list on the right) only - folders and options stay as they are.']);
+upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @moveModelUp);
+downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @moveModelDown);
 
 selectedList = uilistbox(g1);
 selectedList.Layout.Row = 4;
 selectedList.Layout.Column = [4 6];
+safeTooltip(selectedList, ...
+    'Ctrl+click or Shift+click to select several models at once');
 
+% multi-selection where the release supports it (graceful fallback to
+% single selection on R2020a, which has no multi-select list box)
 enableMultiSelect(availableList);
 enableMultiSelect(selectedList);
 
@@ -178,28 +226,35 @@ lblSave.Layout.Column = 4;
 
 saveFolderEdit = uieditfield(g1, 'text', ...
     'Value', getpref('teamtools', 'SaveFolder', ''), ...
-    'Placeholder', '(same as models folder)');
+    'Placeholder', '(same as the models folder)');
 saveFolderEdit.Layout.Row = 5;
 saveFolderEdit.Layout.Column = 5;
 
 browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
-    'FontSize', 11, 'ButtonPushedFcn', @browseSaveFolder);
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @browseSaveFolder);
 browseSaveBtn.Layout.Row = 5;
 browseSaveBtn.Layout.Column = 6;
 
-chkCase = uicheckbox(g1, 'Text', 'Match port names case-insensitively', 'Value', true);
+chkCase = uicheckbox(g1, ...
+    'Text', 'Match port names case-insensitively', 'Value', true);
 chkCase.Layout.Row = 6;
 chkCase.Layout.Column = [1 3];
 
-chkBackup = uicheckbox(g1, 'Text', 'Backup existing model (.bak)', 'Value', true);
+chkBackup = uicheckbox(g1, ...
+    'Text', 'Backup existing model (.bak)', 'Value', true);
 chkBackup.Layout.Row = 6;
 chkBackup.Layout.Column = [4 6];
 
-chkClose = uicheckbox(g1, 'Text', 'Close referenced models when done', 'Value', true);
+chkClose = uicheckbox(g1, ...
+    'Text', 'Close referenced models when done', 'Value', true);
 chkClose.Layout.Row = 7;
 chkClose.Layout.Column = [1 3];
 
-chkWrap = uicheckbox(g1, 'Text', 'Create main subsystem (wrap all contents)', 'Value', true);
+chkWrap = uicheckbox(g1, ...
+    'Text', 'Create main subsystem (wrap all contents)', 'Value', true);
+safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
+    'placed inside one main subsystem of the parent model.']);
 chkWrap.Layout.Row = 7;
 chkWrap.Layout.Column = [4 6];
 
@@ -207,7 +262,12 @@ lblConnMethod = uilabel(g1, 'Text', 'Connect via:');
 lblConnMethod.Layout.Row = 8;
 lblConnMethod.Layout.Column = 1;
 
-connMethodDrop = uidropdown(g1, 'Items', {'From/Goto blocks', 'Direct lines'}, 'Value', 'From/Goto blocks');
+connMethodDrop = uidropdown(g1, ...
+    'Items', {'From/Goto blocks', 'Direct lines'}, ...
+    'Value', 'From/Goto blocks');
+safeTooltip(connMethodDrop, ['From/Goto blocks: signals travel through ', ...
+    'Goto/From tags - no crossing lines. Direct lines: physical lines ', ...
+    'from each output to every matching input.']);
 connMethodDrop.Layout.Row = 8;
 connMethodDrop.Layout.Column = [2 3];
 
@@ -215,7 +275,9 @@ lblArrange = uilabel(g1, 'Text', 'Arrangement:');
 lblArrange.Layout.Row = 8;
 lblArrange.Layout.Column = 4;
 
-layoutDrop = uidropdown(g1, 'Items', {'Horizontal (side by side)', 'Vertical (stacked)'}, 'Value', 'Horizontal (side by side)');
+layoutDrop = uidropdown(g1, ...
+    'Items', {'Horizontal (side by side)', 'Vertical (stacked)'}, ...
+    'Value', 'Horizontal (side by side)');
 layoutDrop.Layout.Row = 8;
 layoutDrop.Layout.Column = [5 6];
 
@@ -223,40 +285,93 @@ chkColor = uicheckbox(g1, 'Text', 'Color blocks by model', 'Value', true);
 chkColor.Layout.Row = 9;
 chkColor.Layout.Column = [1 3];
 
-chkAutoDelay = uicheckbox(g1, 'Text', 'Auto Unit Delay on feedback signals', 'Value', true);
+chkAutoDelay = uicheckbox(g1, ...
+    'Text', 'Auto Unit Delay on feedback signals', 'Value', true);
+safeTooltip(chkAutoDelay, ['Feedback signals (a bottom model feeding a ', ...
+    'model above it in the list, or a model feeding its own input) get ', ...
+    'a Unit Delay at that model''s INPUT - between the From block and ', ...
+    'the input port - which prevents algebraic loops.']);
 chkAutoDelay.Layout.Row = 9;
 chkAutoDelay.Layout.Column = [4 6];
 
+% block spacing and subgrid for the layout gaps
 lblSpacing = uilabel(g1, 'Text', 'Block spacing:');
 lblSpacing.Layout.Row = 10;
 lblSpacing.Layout.Column = 1;
 
-spacingEdit = uieditfield(g1, 'numeric', 'Value', 100, 'Limits', [55 1000], 'RoundFractionalValues', 'on');
+spacingEdit = uieditfield(g1, 'numeric', ...
+    'Value', 100, 'Limits', [55 1000], ...
+    'RoundFractionalValues', 'on');
+safeTooltip(spacingEdit, ['Clear distance in points between newly placed ', ...
+    'blocks (From/Goto/Unit Delay to models and to each other). ', ...
+    'Minimum 55.']);
 spacingEdit.Layout.Row = 10;
 spacingEdit.Layout.Column = 2;
 
-lblSpacingHint = uilabel(g1, 'Text', 'points between new blocks (minimum 55)', 'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
-lblSpacingHint.Layout.Row = 10;
-lblSpacingHint.Layout.Column = [3 6];
+% Layout gaps used by Generate - label/field pairs auto-flow left to right
+gapGrid = uigridlayout(g1, [1 8]);
+gapGrid.Layout.Row = 10;
+gapGrid.Layout.Column = [3 6];
+gapGrid.ColumnWidth = {76, '1x', 76, '1x', 74, '1x', 82, '1x'};
+gapGrid.Padding = [0 0 0 0];
+gapGrid.ColumnSpacing = 4;
 
-previewBtn = uibutton(g1, 'push', 'Text', 'Preview', 'FontSize', 12, 'ButtonPushedFcn', @doPreview);
+uilabel(gapGrid, 'Text', 'From-Model:');
+gapFromModelEdit = uieditfield(gapGrid, 'numeric', ...
+    'Value', getpref('teamtools', 'ArrFromModelGap', 100), ...
+    'Limits', [20 5000], 'RoundFractionalValues', 'on');
+safeTooltip(gapFromModelEdit, ['Gap between the FROM blocks and the ', ...
+    'subsystem, in points (default 100).']);
+
+uilabel(gapGrid, 'Text', 'Model-Goto:');
+gapModelGotoEdit = uieditfield(gapGrid, 'numeric', ...
+    'Value', getpref('teamtools', 'ArrModelGotoGap', 100), ...
+    'Limits', [20 5000], 'RoundFractionalValues', 'on');
+safeTooltip(gapModelGotoEdit, ['Gap between the subsystem and its GOTO ', ...
+    'blocks, in points (default 100).']);
+
+uilabel(gapGrid, 'Text', 'From-Delay:');
+gapFromDelayEdit = uieditfield(gapGrid, 'numeric', ...
+    'Value', getpref('teamtools', 'ArrFromToDelayGap', 40), ...
+    'Limits', [10 2000], 'RoundFractionalValues', 'on');
+safeTooltip(gapFromDelayEdit, ['Gap between a FROM block and the Unit ', ...
+    'Delay behind it, in points (default 40).']);
+
+uilabel(gapGrid, 'Text', 'Model-Model:');
+gapModelModelEdit = uieditfield(gapGrid, 'numeric', ...
+    'Value', getpref('teamtools', 'ArrModelToModelGap', 400), ...
+    'Limits', [50 20000], 'RoundFractionalValues', 'on');
+safeTooltip(gapModelModelEdit, ['Space between one subsystem and the ', ...
+    'next, in points (default 400).']);
+
+previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
+    'FontSize', 12, ...
+    'ButtonPushedFcn', @doPreview);
 previewBtn.Layout.Row = 11;
 previewBtn.Layout.Column = [2 3];
 
-generateBtn = uibutton(g1, 'push', 'Text', 'Generate', 'FontSize', 12, 'FontWeight', 'bold', 'ButtonPushedFcn', @doGenerate);
+generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
+    'FontSize', 12, ...
+    'FontWeight', 'bold', 'ButtonPushedFcn', @doGenerate);
 generateBtn.Layout.Row = 11;
 generateBtn.Layout.Column = [4 5];
 
-lblLoop = uilabel(g1, 'Text', ['Loop breaker - use when Simulink reports an algebraic loop:  ' ...
-    '1) model name  2) Refresh list  3) pick connection  4) Insert Unit Delay'], 'FontWeight', 'bold');
+lblLoop = uilabel(g1, 'Text', ...
+    ['Loop breaker - use when Simulink reports an algebraic loop:  ' ...
+    '1) model name  2) Refresh list  3) pick the looping connection  ' ...
+    '4) Insert Unit Delay'], ...
+    'FontWeight', 'bold');
 lblLoop.Layout.Row = 12;
 lblLoop.Layout.Column = [1 6];
 
-connModelEdit = uieditfield(g1, 'text', 'Placeholder', 'model name (filled after Generate)');
+connModelEdit = uieditfield(g1, 'text', ...
+    'Placeholder', 'model name (filled after Generate)');
 connModelEdit.Layout.Row = 13;
 connModelEdit.Layout.Column = [1 2];
 
-refreshConnBtn = uibutton(g1, 'push', 'Text', 'Refresh list', 'FontSize', 11, 'ButtonPushedFcn', @refreshConnections);
+refreshConnBtn = uibutton(g1, 'push', 'Text', 'Refresh list', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @refreshConnections);
 refreshConnBtn.Layout.Row = 13;
 refreshConnBtn.Layout.Column = 3;
 
@@ -264,47 +379,82 @@ connDropDown = uidropdown(g1, 'Items', {'(no connections yet)'});
 connDropDown.Layout.Row = 13;
 connDropDown.Layout.Column = [4 5];
 
-insertDelayBtn = uibutton(g1, 'push', 'Text', 'Insert Unit Delay', 'FontSize', 11, 'Enable', 'off', 'ButtonPushedFcn', @insertDelay);
+insertDelayBtn = uibutton(g1, 'push', 'Text', 'Insert Unit Delay', ...
+    'FontSize', 11, ...
+    'Enable', 'off', 'ButtonPushedFcn', @insertDelay);
 insertDelayBtn.Layout.Row = 13;
 insertDelayBtn.Layout.Column = 6;
 
-chkDelayFilter = uicheckbox(g1, 'Text', 'Show only connections that already have a Unit Delay', 'ValueChangedFcn', @refreshConnections);
+% filter for the connection list: show only connections with a delay
+chkDelayFilter = uicheckbox(g1, ...
+    'Text', 'Show only connections that already have a Unit Delay', ...
+    'ValueChangedFcn', @refreshConnections);
+safeTooltip(chkDelayFilter, ['Shows only the connections that already contain ', ...
+    'a Unit Delay - handy for checking which feedback signals were ', ...
+    'delayed automatically.']);
 chkDelayFilter.Layout.Row = 14;
 chkDelayFilter.Layout.Column = [1 6];
 
-chkShowAll = uicheckbox(g1, 'Text', 'Show all connections (with and without Unit Delay)', 'ValueChangedFcn', @refreshConnections);
+% second filter: escape hatch to see every connection at once
+chkShowAll = uicheckbox(g1, ...
+    'Text', 'Show all connections (with and without Unit Delay)', ...
+    'ValueChangedFcn', @refreshConnections);
+safeTooltip(chkShowAll, ['Shows every listed connection, with or without a ', ...
+    'Unit Delay. Default (both unticked): only the connections that ', ...
+    'still NEED a Unit Delay.']);
 chkShowAll.Layout.Row = 15;
 chkShowAll.Layout.Column = [1 6];
 
-lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', 'FontWeight', 'bold');
+lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', ...
+    'FontWeight', 'bold');
 lblSignals.Layout.Row = 16;
 lblSignals.Layout.Column = [1 2];
 
-configureSignalsBtn = uibutton(g1, 'push', 'Text', 'Configure Signals', 'FontSize', 11, 'ButtonPushedFcn', @doConfigureSignals);
+configureSignalsBtn = uibutton(g1, 'push', ...
+    'Text', 'Configure Signals', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @doConfigureSignals);
+safeTooltip(configureSignalsBtn, ['Works on the Subsystem block that is ', ...
+    'currently SELECTED in the open model. For every Inport/Outport ', ...
+    'name inside it: creates a Simulink.Signal object (in the data ', ...
+    'dictionary when one is attached, otherwise the model workspace), ', ...
+    'names the connecting lines, enables MustResolveToSignalObject, ', ...
+    'and shows propagated signal names.']);
 configureSignalsBtn.Layout.Row = 16;
 configureSignalsBtn.Layout.Column = [3 4];
 
-lblSignalsHint = uilabel(g1, 'Text', 'select a Subsystem in the model, then press', 'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
+lblSignalsHint = uilabel(g1, ...
+    'Text', 'select a Subsystem in the model, then press', ...
+    'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
 lblSignalsHint.Layout.Row = 16;
 lblSignalsHint.Layout.Column = [5 6];
 
+% Configure Signals: which parts to process
 chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
+safeTooltip(chkCfgInports, ['Process the Subsystem''s Inport signals: ', ...
+    'create/validate Simulink.Signal objects and name the lines.']);
 chkCfgInports.Layout.Row = 17;
 chkCfgInports.Layout.Column = [1 2];
 
 chkCfgOutports = uicheckbox(g1, 'Text', 'Outports', 'Value', true);
+safeTooltip(chkCfgOutports, ['Process the Subsystem''s Outport signals: ', ...
+    'create/validate Simulink.Signal objects and name the lines.']);
 chkCfgOutports.Layout.Row = 17;
 chkCfgOutports.Layout.Column = [3 4];
 
 chkCfgPropagation = uicheckbox(g1, 'Text', 'Propagation', 'Value', true);
+safeTooltip(chkCfgPropagation, 'Display the propagated signal names on the lines.');
 chkCfgPropagation.Layout.Row = 17;
 chkCfgPropagation.Layout.Column = 5;
 
 chkCfgResolver = uicheckbox(g1, 'Text', 'Resolver', 'Value', true);
+safeTooltip(chkCfgResolver, ['Enable "Signal name must resolve to signal ', ...
+    'object" (MustResolveToSignalObject) on the named lines.']);
 chkCfgResolver.Layout.Row = 17;
 chkCfgResolver.Layout.Column = 6;
 
-log1 = uitextarea(g1, 'Editable', 'off', 'Value', {'Ready. Choose a models folder to begin.'});
+log1 = uitextarea(g1, 'Editable', 'off', ...
+    'Value', {'Ready. Choose a models folder to begin.'});
 log1.Layout.Row = 18;
 log1.Layout.Column = [1 6];
 
@@ -318,7 +468,9 @@ g2.Padding = [14 10 14 10];
 g2.RowSpacing = 6;
 g2.ColumnSpacing = 8;
 
-hint2 = uilabel(g2, 'Text', ['1) Click subsystem in Simulink    2) Refresh    3) Choose folders    4) Extract'], ...
+hint2 = uilabel(g2, ...
+    'Text', ['1) Click a subsystem in your Simulink model    2) Refresh    ' ...
+    '3) Choose folders    4) Extract'], ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
 hint2.Layout.Row = 1;
 hint2.Layout.Column = [1 6];
@@ -327,11 +479,14 @@ lblSub = uilabel(g2, 'Text', 'Selected subsystem:', 'FontWeight', 'bold');
 lblSub.Layout.Row = 2;
 lblSub.Layout.Column = 1;
 
-subsystemLabel = uilabel(g2, 'Text', '<no subsystem selected>', 'FontColor', [0.75 0 0]);
+subsystemLabel = uilabel(g2, 'Text', '<no subsystem selected>', ...
+    'FontColor', [0.75 0 0]);
 subsystemLabel.Layout.Row = 2;
 subsystemLabel.Layout.Column = [2 5];
 
-refreshSubBtn = uibutton(g2, 'push', 'Text', 'Refresh', 'FontSize', 11, 'ButtonPushedFcn', @refreshSubsystem);
+refreshSubBtn = uibutton(g2, 'push', 'Text', 'Refresh', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @refreshSubsystem);
 refreshSubBtn.Layout.Row = 2;
 refreshSubBtn.Layout.Column = 6;
 
@@ -339,7 +494,8 @@ lblPorts = uilabel(g2, 'Text', 'Ports to use as tags:', 'FontWeight', 'bold');
 lblPorts.Layout.Row = 3;
 lblPorts.Layout.Column = 1;
 
-portDropDown = uidropdown(g2, 'Items', {'Inports', 'Outports', 'Both'}, 'Value', 'Both');
+portDropDown = uidropdown(g2, ...
+    'Items', {'Inports', 'Outports', 'Both'}, 'Value', 'Both');
 portDropDown.Layout.Row = 3;
 portDropDown.Layout.Column = [2 3];
 
@@ -347,7 +503,9 @@ lblInfo = uilabel(g2, 'Text', 'File information:', 'FontWeight', 'bold');
 lblInfo.Layout.Row = 3;
 lblInfo.Layout.Column = 4;
 
-infoDropDown = uidropdown(g2, 'Items', {'Header + source comments', 'Header only', 'Source comments only'}, 'Value', 'Header + source comments');
+infoDropDown = uidropdown(g2, ...
+    'Items', {'Header + source comments', 'Header only', 'Source comments only'}, ...
+    'Value', 'Header + source comments');
 infoDropDown.Layout.Row = 3;
 infoDropDown.Layout.Column = [5 6];
 
@@ -355,11 +513,15 @@ lblSearch = uilabel(g2, 'Text', 'Search folder:', 'FontWeight', 'bold');
 lblSearch.Layout.Row = 4;
 lblSearch.Layout.Column = 1;
 
-searchEdit = uieditfield(g2, 'text', 'Value', getpref('teamtools', 'SearchFolder', ''), 'Placeholder', 'Parent folder containing .m files');
+searchEdit = uieditfield(g2, 'text', ...
+    'Value', getpref('teamtools', 'SearchFolder', ''), ...
+    'Placeholder', 'Parent folder containing the .m files to scan');
 searchEdit.Layout.Row = 4;
 searchEdit.Layout.Column = [2 5];
 
-browseSearchBtn = uibutton(g2, 'push', 'Text', 'Browse...', 'FontSize', 11, 'ButtonPushedFcn', @browseSearchFolder);
+browseSearchBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @browseSearchFolder);
 browseSearchBtn.Layout.Row = 4;
 browseSearchBtn.Layout.Column = 6;
 
@@ -367,11 +529,15 @@ lblDest = uilabel(g2, 'Text', 'Destination file:', 'FontWeight', 'bold');
 lblDest.Layout.Row = 5;
 lblDest.Layout.Column = 1;
 
-destEdit = uieditfield(g2, 'text', 'Value', getpref('teamtools', 'OutputFile', ''), 'Placeholder', 'ExtractedAttributes.m');
+destEdit = uieditfield(g2, 'text', ...
+    'Value', getpref('teamtools', 'OutputFile', ''), ...
+    'Placeholder', 'ExtractedAttributes.m');
 destEdit.Layout.Row = 5;
 destEdit.Layout.Column = [2 5];
 
-browseDestBtn = uibutton(g2, 'push', 'Text', 'Browse...', 'FontSize', 11, 'ButtonPushedFcn', @browseOutputFile);
+browseDestBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @browseOutputFile);
 browseDestBtn.Layout.Row = 5;
 browseDestBtn.Layout.Column = 6;
 
@@ -379,47 +545,71 @@ chkCase2 = uicheckbox(g2, 'Text', 'Case-insensitive matching', 'Value', true);
 chkCase2.Layout.Row = 6;
 chkCase2.Layout.Column = [1 3];
 
-extractBtn = uibutton(g2, 'push', 'Text', 'Extract', 'FontSize', 11, 'FontWeight', 'bold', 'ButtonPushedFcn', @doExtract);
+extractBtn = uibutton(g2, 'push', 'Text', 'Extract', ...
+    'FontSize', 11, ...
+    'FontWeight', 'bold', 'ButtonPushedFcn', @doExtract);
 extractBtn.Layout.Row = 6;
 extractBtn.Layout.Column = 4;
 
-openOutputBtn = uibutton(g2, 'push', 'Text', 'Open Output', 'FontSize', 11, 'Enable', 'off', 'ButtonPushedFcn', @openOutputFile);
+openOutputBtn = uibutton(g2, 'push', 'Text', 'Open Output', ...
+    'FontSize', 11, ...
+    'Enable', 'off', 'ButtonPushedFcn', @openOutputFile);
 openOutputBtn.Layout.Row = 6;
 openOutputBtn.Layout.Column = 5;
 
-openFolderBtn = uibutton(g2, 'push', 'Text', 'Open Folder', 'FontSize', 11, 'Enable', 'off', 'ButtonPushedFcn', @openOutputFolder);
+openFolderBtn = uibutton(g2, 'push', 'Text', 'Open Folder', ...
+    'FontSize', 11, ...
+    'Enable', 'off', 'ButtonPushedFcn', @openOutputFolder);
 openFolderBtn.Layout.Row = 6;
 openFolderBtn.Layout.Column = 6;
 
-lblConvert = uilabel(g2, 'Text', 'convert_m_to_sldd:', 'FontWeight', 'bold');
+lblConvert = uilabel(g2, 'Text', 'convert_m_to_sldd:', ...
+    'FontWeight', 'bold');
 lblConvert.Layout.Row = 7;
 lblConvert.Layout.Column = 1;
 
-convertPathEdit = uieditfield(g2, 'text', 'Value', getpref('teamtools', 'ConvertPath', ''), 'Placeholder', 'Path of convert_m_to_sldd.m');
+convertPathEdit = uieditfield(g2, 'text', ...
+    'Value', getpref('teamtools', 'ConvertPath', ''), ...
+    'Placeholder', 'Path of convert_m_to_sldd.m or its folder');
 convertPathEdit.Layout.Row = 7;
 convertPathEdit.Layout.Column = [2 3];
 
-browseConvertBtn = uibutton(g2, 'push', 'Text', 'Browse...', 'FontSize', 11, 'ButtonPushedFcn', @browseConvertPath);
+browseConvertBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
+    'FontSize', 11, 'ButtonPushedFcn', @browseConvertPath);
 browseConvertBtn.Layout.Row = 7;
 browseConvertBtn.Layout.Column = 4;
 
-convertBtn = uibutton(g2, 'push', 'Text', 'Convert to .sldd', 'FontSize', 11, 'FontWeight', 'bold', 'ButtonPushedFcn', @doConvertToSldd);
+convertBtn = uibutton(g2, 'push', 'Text', 'Convert to .sldd', ...
+    'FontSize', 11, 'FontWeight', 'bold', ...
+    'ButtonPushedFcn', @doConvertToSldd);
+safeTooltip(convertBtn, ['Runs the team''s convert_m_to_sldd function ', ...
+    'on the extracted attributes file (.m). Set the path to the ', ...
+    'convert_m_to_sldd.m file - or the folder that contains it - ', ...
+    'first; use Browse... to pick it.']);
 convertBtn.Layout.Row = 7;
 convertBtn.Layout.Column = [5 6];
 
-lblSlddDest = uilabel(g2, 'Text', 'Save .sldd in:', 'FontWeight', 'bold');
+lblSlddDest = uilabel(g2, 'Text', 'Save .sldd in:', ...
+    'FontWeight', 'bold');
 lblSlddDest.Layout.Row = 8;
 lblSlddDest.Layout.Column = 1;
 
-slddDestEdit = uieditfield(g2, 'text', 'Value', getpref('teamtools', 'SlddDestFolder', ''), 'Placeholder', 'Folder for .sldd (empty = .m folder)');
+slddDestEdit = uieditfield(g2, 'text', ...
+    'Value', getpref('teamtools', 'SlddDestFolder', ''), ...
+    'Placeholder', 'Folder for the created .sldd (empty = .m folder)');
 slddDestEdit.Layout.Row = 8;
 slddDestEdit.Layout.Column = [2 3];
+safeTooltip(slddDestEdit, ['Where the .sldd file(s) created by the ', ...
+    'conversion are moved. Empty = the folder of the converted .m ', ...
+    'file. Nothing is left behind in the MATLAB current folder.']);
 
-browseSlddDestBtn = uibutton(g2, 'push', 'Text', 'Browse...', 'FontSize', 11, 'ButtonPushedFcn', @browseSlddDest);
+browseSlddDestBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
+    'FontSize', 11, 'ButtonPushedFcn', @browseSlddDest);
 browseSlddDestBtn.Layout.Row = 8;
 browseSlddDestBtn.Layout.Column = 4;
 
-lblTags = uilabel(g2, 'Text', 'Tags that will be searched:', 'FontWeight', 'bold');
+lblTags = uilabel(g2, 'Text', 'Tags that will be searched:', ...
+    'FontWeight', 'bold');
 lblTags.Layout.Row = 9;
 lblTags.Layout.Column = [1 6];
 
@@ -427,11 +617,12 @@ tagsList = uilistbox(g2);
 tagsList.Layout.Row = 10;
 tagsList.Layout.Column = [1 6];
 
-log2 = uitextarea(g2, 'Editable', 'off', 'Value', {'Ready. Select a subsystem in Simulink and press Refresh.'});
+log2 = uitextarea(g2, 'Editable', 'off', ...
+    'Value', {'Ready. Select a subsystem in Simulink and press Refresh.'});
 log2.Layout.Row = 11;
 log2.Layout.Column = [1 6];
 
-% ---- Initial content -------------------------------------------------------
+% ---- initial content -------------------------------------------------------
 if isfolder(char(strtrim(modelsFolderEdit.Value)))
     refreshModelList();
 else
@@ -439,7 +630,7 @@ else
 end
 
 % =========================================================================
-%  NESTED CALLBACKS
+%  NESTED CALLBACKS - TAB 1
 % =========================================================================
 function setStatus(message)
 statusLabel.Text = char(message);
@@ -447,38 +638,62 @@ drawnow limitrate;
 end
 
 function bringAppToFront()
+%BRINGAPPTOFRONT Raise the app window after a native file dialog.
+%
+% uigetdir/uigetfile/uiputfile are native dialogs; when they close,
+% focus lands on the MATLAB desktop and the app hides behind it.
+% figure(app) raises the app window again (with a Visible fallback
+% for releases where that call is restricted).
+
 try
     drawnow;
     figure(app);
 catch
-    try app.Visible = 'on'; catch, end
+    try
+        app.Visible = 'on';
+    catch
+    end
 end
 end
 
 function onAppClose(~, ~)
+%ONAPPCLOSE Stop the log.txt diary, then close the window.
+
 try
-    fprintf(['=== Simulink Team Tools - session log closed %s ===\n'], char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
+    fprintf(['=== Simulink Team Tools - session log closed %s ', ...
+        '===\n'], char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
 catch
 end
 try
     diary('off');
-    if prevDiaryOn, diary(prevDiaryFile); end
+    if prevDiaryOn
+        diary(prevDiaryFile);   % the user ran their own diary
+    end
 catch
 end
-try set_param(0, 'CacheFolder', origCacheFolder); catch, end
+try
+    set_param(0, 'CacheFolder', origCacheFolder);
+catch
+end
 delete(app);
 end
 
 function browseModelsFolder(~, ~)
 startFolder = pwd;
 candidate = char(strtrim(modelsFolderEdit.Value));
-if isfolder(candidate), startFolder = candidate; end
-chosenFolder = uigetdir(startFolder, 'Select models folder');
+if isfolder(candidate)
+    startFolder = candidate;
+end
+chosenFolder = uigetdir(startFolder, 'Select the folder containing the models');
 bringAppToFront();
-if isequal(chosenFolder, 0), return; end
+if isequal(chosenFolder, 0)
+    return;
+end
 modelsFolderEdit.Value = chosenFolder;
 setpref('teamtools', 'ModelsFolder', chosenFolder);
-if isempty(strtrim(saveFolderEdit.Value)), saveFolderEdit.Value = chosenFolder; end
+if isempty(strtrim(saveFolderEdit.Value))
+    saveFolderEdit.Value = chosenFolder;
+end
 refreshModelList();
 end
 
@@ -494,7 +709,9 @@ end
 
 function refreshModelList()
 folder = char(strtrim(modelsFolderEdit.Value));
-if ~isfolder(folder), return; end
+if ~isfolder(folder)
+    return;
+end
 files = discoverModelFiles(folder);
 if isempty(files)
     availableList.Items = {'(no .slx or .mdl files found)'};
@@ -521,21 +738,36 @@ state.AvailableNames = names;
 state.AvailableLabels = labels;
 updateAvailableLabels();
 
+duplicateNames = unique(names);
+if numel(duplicateNames) < numel(names)
+    logTo(log1, ['Warning: some model filenames appear more than once ', ...
+        'in different subfolders. Keep filenames unique - duplicates ', ...
+        'cannot be selected.']);
+end
 if isempty(strtrim(state.AvailableFilter))
     setStatus(sprintf('%d model(s) found.', numel(files)));
 else
     foundShown = numel(availableList.Items);
-    if foundShown == 1 && strcmp(availableList.Items{1}, '(no matching models)')
+    if foundShown == 1 && ...
+            strcmp(availableList.Items{1}, '(no matching models)')
         foundShown = 0;
     end
-    setStatus(sprintf('%d model(s) found, %d match search filter.', numel(files), foundShown));
+    setStatus(sprintf(['%d model(s) found, %d match the search ', ...
+        'filter.'], numel(files), foundShown));
 end
 end
 
 function updateAvailableLabels()
-baseLabels = state.AvailableLabels;
-if isempty(baseLabels), return; end
+%UPDATEAVAILABLELABELS Refresh the left list: apply the search filter
+% and mark models that are already in the selected list.
 
+baseLabels = state.AvailableLabels;
+if isempty(baseLabels)
+    return;
+end
+
+% search filter: keep the models whose label (name + subfolder)
+% contains the typed text, case-insensitively
 query = lower(strtrim(state.AvailableFilter));
 if isempty(query)
     visibleMask = true(numel(baseLabels), 1);
@@ -557,42 +789,74 @@ for labelIndex = 1:numel(baseLabels)
     end
 end
 
-if isequal(availableList.Items, marked), return; end
+if isequal(availableList.Items, marked)
+    return;   % nothing changed - avoid unnecessary updates
+end
 
 wasChar = ischar(availableList.Value);
 currentSelection = asCell(availableList.Value);
+% strip the marker before matching against the base labels
 currentBase = strrep(currentSelection, '  [added]', '');
 selectedPositions = find(ismember(baseLabels, currentBase));
 
 availableList.Items = marked;
 if isempty(selectedPositions)
-    try availableList.Value = marked{1}; catch, end
+    try
+        availableList.Value = marked{1};
+    catch
+    end
 else
     setListSelection(availableList, marked(selectedPositions), wasChar);
 end
 end
 
 function onAvailableFilterChanged(src, ~)
+%ONAVAILABLEFILTERCHANGED Filter the available list (Enter/focus loss).
+
 state.AvailableFilter = char(strtrim(src.Value));
-if isempty(state.AvailableNames), return; end
+if isempty(state.AvailableNames)
+    return;
+end
 updateAvailableLabels();
+
+filterTotal = numel(state.AvailableNames);
+filterShown = numel(availableList.Items);
+if filterShown == 1 && ...
+        strcmp(availableList.Items{1}, '(no matching models)')
+    setStatus(sprintf('No models match "%s".', state.AvailableFilter));
+elseif isempty(strtrim(state.AvailableFilter))
+    setStatus(sprintf('Showing all %d model(s).', filterTotal));
+else
+    setStatus(sprintf('Search: %d of %d model(s) shown.', ...
+        filterShown, filterTotal));
+end
 end
 
 function addModel(~, ~)
 selectedLabels = asCell(availableList.Value);
 if isempty(selectedLabels)
-    setStatus('Select one or more models in left list first.');
+    setStatus('Select one or more models in the left list first.');
     return;
 end
 addModelsByLabel(selectedLabels);
 end
 
 function addAllModels(~, ~)
+%ADDALLMODELS Add every model shown in the available list. When a
+% search filter is active, only the matching models are added.
 addModelsByLabel(availableList.Items);
 end
 
 function addModelsByLabel(labelsToAdd)
-if isempty(state.AvailableNames), return; end
+%ADDMODELSBYLABEL Add the models behind these labels, in listed order.
+
+if isempty(state.AvailableNames)
+    setStatus('No models available - choose a models folder first.');
+    return;
+end
+
+% match labels against the FULL available list (not the visible list
+% box), so adding keeps working while a search filter is active
 newNames = {};
 skippedCount = 0;
 for availIndex = 1:numel(state.AvailableLabels)
@@ -600,8 +864,12 @@ for availIndex = 1:numel(state.AvailableLabels)
     candidateName = state.AvailableNames{availIndex};
     alreadyAdded = any(strcmpi(selectedList.Items, candidateName));
     itemLabel = baseLabel;
-    if alreadyAdded, itemLabel = [baseLabel '  [added]']; end
-    if ~any(strcmp(labelsToAdd, itemLabel)), continue; end
+    if alreadyAdded
+        itemLabel = [baseLabel '  [added]'];
+    end
+    if ~any(strcmp(labelsToAdd, itemLabel))
+        continue;
+    end
     if alreadyAdded
         skippedCount = skippedCount + 1;
     else
@@ -609,39 +877,81 @@ for availIndex = 1:numel(state.AvailableLabels)
     end
 end
 
-if isempty(newNames), return; end
+if isempty(newNames) && skippedCount == 0
+    setStatus('No matching model(s) to add.');
+    return;
+end
+if isempty(newNames)
+    setStatus('Those model(s) are already in the selected list.');
+    return;
+end
+
 wasChar = ischar(selectedList.Value);
 selectedList.Items = [selectedList.Items, newNames];
 setListSelection(selectedList, newNames, wasChar);
 updateAvailableLabels();
+
+message = sprintf('Added %d model(s).', numel(newNames));
+if skippedCount > 0
+    message = sprintf('%s  (%d already added - skipped)', message, ...
+        skippedCount);
+end
+setStatus(message);
 end
 
 function removeModel(~, ~)
-if isempty(selectedList.Items), return; end
+if isempty(selectedList.Items)
+    setStatus('The selected list is already empty.');
+    return;
+end
 selectedValues = asCell(selectedList.Value);
-if isempty(selectedValues), return; end
+if isempty(selectedValues)
+    setStatus('Select one or more models in the right list first.');
+    return;
+end
 items = selectedList.Items;
-items = items(~ismember(items, selectedValues));
+keepMask = ~ismember(items, selectedValues);
+removedCount = numel(items) - sum(keepMask);
+items = items(keepMask);
 selectedList.Items = items;
-if ~isempty(items), selectedList.Value = items{1}; end
+if ~isempty(items)
+    selectedList.Value = items{1};
+end
 updateAvailableLabels();
+setStatus(sprintf('Removed %d model(s).', removedCount));
 end
 
 function clearSelectedModels(~, ~)
+%CLEARSELECTEDMODELS Empty the selected-models list only (Clear button).
+
+if isempty(selectedList.Items)
+    setStatus('The selected list is already empty.');
+    return;
+end
+removedCount = numel(selectedList.Items);
 selectedList.Items = {};
 updateAvailableLabels();
+setStatus(sprintf('Cleared %d model(s) from the selected list.', ...
+    removedCount));
 end
 
 function clearAllData(~, ~)
+%CLEARALLDATA Reset every input on all tabs in one click (Clear All).
+
+% --- Tab 1: model selection and generation options
 filterEdit.Value = '';
 state.AvailableFilter = '';
+% FIX 1: Explicitly reset background state data to avoid search reappearances
 state.AvailableNames = {};
 state.AvailableLabels = {};
 selectedList.Items = {};
 updateAvailableLabels();
 modelsFolderEdit.Value = '';
 availableList.Items = {};
-try availableList.Value = ''; catch, end
+try
+    availableList.Value = '';
+catch
+end
 nameEdit.Value = '';
 saveFolderEdit.Value = '';
 chkCase.Value = true;
@@ -654,6 +964,13 @@ chkColor.Value = true;
 chkAutoDelay.Value = true;
 spacingEdit.Value = 100;
 
+% Reset layout gaps
+gapFromModelEdit.Value = 100;
+gapModelGotoEdit.Value = 100;
+gapFromDelayEdit.Value = 40;
+gapModelModelEdit.Value = 400;
+
+% --- Tab 1: loop breaker
 connModelEdit.Value = '';
 chkDelayFilter.Value = false;
 chkShowAll.Value = false;
@@ -665,38 +982,83 @@ try
 catch
 end
 insertDelayBtn.Enable = 'off';
+chkCfgInports.Value = true;
+chkCfgOutports.Value = true;
+chkCfgPropagation.Value = true;
+chkCfgResolver.Value = true;
 
+% --- Tab 2: extract attributes
 subsystemLabel.Text = '<no subsystem selected>';
 subsystemLabel.FontColor = [0.75 0 0];
+portDropDown.Value = 'Both';
+infoDropDown.Value = 'Header + source comments';
 searchEdit.Value = '';
 destEdit.Value = '';
 convertPathEdit.Value = '';
 slddDestEdit.Value = '';
+chkCase2.Value = true;
 tagsList.Items = {};
+try
+    tagsList.Value = '';
+catch
+end
+state.ExtractOutput = '';
+openOutputBtn.Enable = 'off';
+openFolderBtn.Enable = 'off';
 
-logTo(log1, 'All inputs cleared.');
+logTo(log1, 'All inputs cleared (all tabs). The log is kept.');
 setStatus('All inputs cleared.');
 end
 
-function moveModelUp(~, ~), moveModel(-1); end
-function moveModelDown(~, ~), moveModel(1); end
+function moveModelUp(~, ~)
+moveModel(-1);
+end
+
+function moveModelDown(~, ~)
+moveModel(1);
+end
 
 function moveModel(direction)
-if isempty(selectedList.Items), return; end
+%MOVEMODEL Move every selected model one position up (-1) or down (+1).
+% Works for a single selection and for multiple selections.
+
+if isempty(selectedList.Items)
+    setStatus('The selected list is empty.');
+    return;
+end
 selectedValues = asCell(selectedList.Value);
-if isempty(selectedValues), return; end
+if isempty(selectedValues)
+    setStatus('Select one or more models in the right list first.');
+    return;
+end
+
 items = selectedList.Items;
 selectedMask = ismember(items, selectedValues);
 wasChar = ischar(selectedList.Value);
 
-if direction < 0, scanOrder = 1:numel(items); else, scanOrder = numel(items):-1:1; end
+if direction < 0
+    scanOrder = 1:numel(items);        % moving up: work top to bottom
+else
+    scanOrder = numel(items):-1:1;     % moving down: work bottom to top
+end
 
 for k = scanOrder
-    if ~selectedMask(k), continue; end
+    if ~selectedMask(k)
+        continue;
+    end
     targetIndex = k + direction;
-    if targetIndex < 1 || targetIndex > numel(items) || selectedMask(targetIndex), continue; end
-    tmp = items{k}; items{k} = items{targetIndex}; items{targetIndex} = tmp;
-    tmpMask = selectedMask(k); selectedMask(k) = selectedMask(targetIndex); selectedMask(targetIndex) = tmpMask;
+    if targetIndex < 1 || targetIndex > numel(items)
+        continue;
+    end
+    if selectedMask(targetIndex)
+        continue;   % part of the same block - already handled by a neighbour
+    end
+    tmp = items{k};
+    items{k} = items{targetIndex};
+    items{targetIndex} = tmp;
+    tmpMask = selectedMask(k);
+    selectedMask(k) = selectedMask(targetIndex);
+    selectedMask(targetIndex) = tmpMask;
 end
 
 selectedList.Items = items;
@@ -706,62 +1068,124 @@ end
 function browseSaveFolder(~, ~)
 startFolder = pwd;
 candidate = char(strtrim(modelsFolderEdit.Value));
-if isfolder(candidate), startFolder = candidate; end
+if isfolder(candidate)
+    startFolder = candidate;
+end
 candidate = char(strtrim(saveFolderEdit.Value));
-if isfolder(candidate), startFolder = candidate; end
-chosenFolder = uigetdir(startFolder, 'Select save folder');
+if isfolder(candidate)
+    startFolder = candidate;
+end
+chosenFolder = uigetdir(startFolder, 'Select where to save the generated model');
 bringAppToFront();
-if isequal(chosenFolder, 0), return; end
+if isequal(chosenFolder, 0)
+    return;
+end
 saveFolderEdit.Value = chosenFolder;
 setpref('teamtools', 'SaveFolder', chosenFolder);
 end
 
 function s = integrationStyle()
+%INTEGRATIONSTYLE Read the integration-style controls into option fields.
+
 s = struct();
-if strcmp(connMethodDrop.Value, 'Direct lines'), s.ConnectionMethod = 'lines'; else, s.ConnectionMethod = 'fromgoto'; end
-if startsWith(layoutDrop.Value, 'Horizontal'), s.Layout = 'horizontal'; else, s.Layout = 'vertical'; end
+if strcmp(connMethodDrop.Value, 'Direct lines')
+    s.ConnectionMethod = 'lines';
+else
+    s.ConnectionMethod = 'fromgoto';
+end
+if startsWith(layoutDrop.Value, 'Horizontal')
+    s.Layout = 'horizontal';
+else
+    s.Layout = 'vertical';
+end
 s.ColorBlocks = logical(chkColor.Value);
 s.AutoDelayFeedback = logical(chkAutoDelay.Value);
 s.BlockSpacing = spacingPoints();
+spacingGapValues = spacingGaps();
+s.FromModelGap = spacingGapValues.FromModelGap;
+s.ModelGotoGap = spacingGapValues.ModelGotoGap;
+s.FromToDelayGap = spacingGapValues.FromToDelayGap;
+s.ModelToModelGap = spacingGapValues.ModelToModelGap;
 end
 
 function spacing = spacingPoints()
-try value = double(spacingEdit.Value); catch, value = 100; end
-if isnan(value) || value < 55, value = 55; end
+%SPACINGPOINTS Validated block spacing from the field (min 55 points).
+% NOTE: must stay NESTED inside teamtools (before its closing end):
+% it reads the spacing field, which the local helpers after that
+% end cannot see.
+
+try
+    value = double(spacingEdit.Value);
+catch
+    value = 100;
+end
+if isnan(value) || value < 55
+    value = 55;
+end
 spacing = round(value);
+end
+
+function gaps = spacingGaps()
+%SPACINGGAPS The four user spacing gaps (persisted in preferences).
+% NOTE: must stay NESTED inside teamtools (before its closing end):
+% it reads the gap edit fields, which the local helpers after that
+% end cannot see.
+
+gaps = struct( ...
+    'FromModelGap',   gapValue(gapFromModelEdit, 100, 'ArrFromModelGap', 20), ...
+    'ModelGotoGap',   gapValue(gapModelGotoEdit, 100, 'ArrModelGotoGap', 20), ...
+    'FromToDelayGap', gapValue(gapFromDelayEdit, 40, 'ArrFromToDelayGap', 10), ...
+    'ModelToModelGap', gapValue(gapModelModelEdit, 400, 'ArrModelToModelGap', 50));
 end
 
 function [folder, models, modelName, saveFolder] = validateTab1()
 folder = char(strtrim(modelsFolderEdit.Value));
 if ~isfolder(folder)
-    notify(app, 'Choose valid models folder first.', 'Missing folder', 'warning');
-    folder = ''; return;
+    notify(app, 'Choose a valid models folder first (Browse...).', ...
+        'Missing folder', 'warning');
+    folder = '';
+    return;
 end
 models = selectedList.Items;
 if isempty(models)
-    notify(app, 'Add at least one model to selected list.', 'No models', 'warning');
-    models = {}; return;
+    notify(app, 'Add at least one model to the selected list.', ...
+        'No models selected', 'warning');
+    models = {};
+    return;
 end
 modelName = char(strtrim(nameEdit.Value));
 if isempty(modelName)
     modelName = 'GeneratedReferenceModel';
     nameEdit.Value = modelName;
+    logTo(log1, sprintf('No name entered - using "%s".', modelName));
 end
-modelName = matlab.lang.makeValidName(modelName, 'ReplacementStyle', 'underscore');
+validName = matlab.lang.makeValidName(modelName, ...
+    'ReplacementStyle', 'underscore');
+if ~strcmp(validName, modelName)
+    logTo(log1, sprintf('Name adjusted to a valid MATLAB name: "%s".', validName));
+    modelName = validName;
+end
 saveFolder = char(strtrim(saveFolderEdit.Value));
 if isempty(saveFolder)
     saveFolder = folder;
     saveFolderEdit.Value = folder;
 end
+% FIX 4: Implemented immediate return on validation check for safety.
 if ~isfolder(saveFolder)
-    notify(app, 'Save folder path does not exist.', 'Invalid folder', 'warning');
-    folder = ''; return;
+    notify(app, 'The "Save in folder" path does not exist.', ...
+        'Invalid folder', 'warning');
+    folder = '';
+    return;
 end
 end
 
 function doPreview(~, ~)
 [folder, models, modelName, saveFolder] = validateTab1();
-if isempty(folder) || isempty(models), return; end
+if isempty(folder) || isempty(models)
+    return;
+end
+
+logTo(log1, sprintf('Preview: %d model(s) -> "%s".', numel(models), modelName));
 
 styleOpts = integrationStyle();
 options = struct( ...
@@ -773,6 +1197,10 @@ options = struct( ...
     'ColorBlocks',          styleOpts.ColorBlocks, ...
     'AutoDelayFeedback',    styleOpts.AutoDelayFeedback, ...
     'BlockSpacing',         styleOpts.BlockSpacing, ...
+    'FromModelGap',         styleOpts.FromModelGap, ...
+    'ModelGotoGap',         styleOpts.ModelGotoGap, ...
+    'FromToDelayGap',       styleOpts.FromToDelayGap, ...
+    'ModelToModelGap',      styleOpts.ModelToModelGap, ...
     'ConfigParameters',     {{'UseDivisionForNetSlopeComputation'}});
 
 setStatus('Preparing preview...');
@@ -793,19 +1221,35 @@ catch previewError
 end
 previewBtn.Enable = 'on';
 logMany(log1, renderPlanLines(result));
-setStatus('Preview complete.');
+setStatus('Preview complete - review it above, then press Generate.');
+notify(app, sprintf(['Preview complete.\n\n%d model(s), %d internal ', ...
+    'connection(s), %d root input(s), %d root output(s).\n', ...
+    'Check the log for warnings before generating.'], ...
+    numel(result.Models), result.Counts.Internal, ...
+    result.Counts.RootInputs, result.Counts.RootOutputs), ...
+    'Preview complete', 'info');
 end
 
 function doGenerate(~, ~)
 [folder, models, modelName, saveFolder] = validateTab1();
-if isempty(folder) || isempty(models), return; end
+if isempty(folder) || isempty(models)
+    return;
+end
+
+logTo(log1, sprintf('Generate: building "%s" from %d model(s).', ...
+    modelName, numel(models)));
 
 targetFile = fullfile(saveFolder, [modelName '.slx']);
 overwrite = false;
 if isfile(targetFile)
-    doOverwrite = confirmDialog(app, sprintf('Overwrite existing model %s?', targetFile), ...
+    doOverwrite = confirmDialog(app, ...
+        sprintf(['This model file already exists:\n%s\n\n', ...
+        'Overwrite it? (a .bak backup is kept by default)'], targetFile), ...
         'Overwrite model?', 'Yes, overwrite', 'Cancel');
-    if ~doOverwrite, setStatus('Generation cancelled.'); return; end
+    if ~doOverwrite
+        setStatus('Generation cancelled.');
+        return;
+    end
     overwrite = true;
 end
 
@@ -823,10 +1267,32 @@ options = struct( ...
     'ColorBlocks',          styleOpts.ColorBlocks, ...
     'AutoDelayFeedback',    styleOpts.AutoDelayFeedback, ...
     'BlockSpacing',         styleOpts.BlockSpacing, ...
+    'FromModelGap',         styleOpts.FromModelGap, ...
+    'ModelGotoGap',         styleOpts.ModelGotoGap, ...
+    'FromToDelayGap',       styleOpts.FromToDelayGap, ...
+    'ModelToModelGap',      styleOpts.ModelToModelGap, ...
     'ConfigParameters',     {{'UseDivisionForNetSlopeComputation'}});
 
-setStatus('Generating & Auto-Arranging...');
-generateBtn.Enable = 'off'; previewBtn.Enable = 'off';
+% point the session's Simulink cache folder at the destination, so
+% the .slxc cache files of the generated model AND the referenced
+% models land there instead of the folder MATLAB was started in;
+% the previous setting is restored when the app closes
+try
+    if cacheFolderWritable(saveFolder)
+        set_param(0, 'CacheFolder', absFolder(saveFolder));
+        logTo(log1, sprintf(['Simulink cache folder (.slxc files) ', ...
+            'pointed at the destination:\n  %s'], ...
+            absFolder(saveFolder)));
+    else
+        logTo(log1, ['Destination folder is not writable - .slxc ', ...
+            'cache files stay in the MATLAB current folder.']);
+    end
+catch
+end
+
+setStatus('Generating...');
+generateBtn.Enable = 'off';
+previewBtn.Enable = 'off';
 p = makeProgress(app, 'Generating parent model');
 try
     options.ProgressFcn = @(fraction, message) p.set(fraction, message);
@@ -834,37 +1300,127 @@ try
     result = buildParentModelCore(folder, models, modelName, options);
     p.close();
 catch generateError
-    p.close(); generateBtn.Enable = 'on'; previewBtn.Enable = 'on';
+    p.close();
+    generateBtn.Enable = 'on';
+    previewBtn.Enable = 'on';
     setStatus('Generation failed.');
     logTo(log1, ['ERROR: ' errorDetails(generateError)]);
     notify(app, errorDetails(generateError), 'Generation failed', 'error');
     return;
 end
-generateBtn.Enable = 'on'; previewBtn.Enable = 'on';
+generateBtn.Enable = 'on';
+previewBtn.Enable = 'on';
 
 if result.Cancelled
-    setStatus('Generation cancelled.'); return;
+    setStatus('Generation cancelled.');
+    logTo(log1, 'Generation cancelled by user - nothing was saved.');
+    return;
 end
+
+lines = {};
+lines{end + 1} = '===============================================';
+lines{end + 1} = 'Generation completed successfully';
+lines{end + 1} = sprintf('Generated model : %s', result.OutputFile);
+lines{end + 1} = sprintf('Referenced models : %d', numel(result.Models));
+if styleOpts.ColorBlocks
+    colorState = 'on';
+else
+    colorState = 'off';
+end
+if styleOpts.AutoDelayFeedback
+    delayState = 'on';
+else
+    delayState = 'off';
+end
+lines{end + 1} = sprintf('Style : %s | %s | colors: %s | auto delay: %s', ...
+    styleOpts.ConnectionMethod, styleOpts.Layout, colorState, delayState);
+lines{end + 1} = sprintf('Internal connections : %d', result.Counts.Internal);
+lines{end + 1} = sprintf('Root inputs : %d | Root outputs : %d', ...
+    result.Counts.RootInputs, result.Counts.RootOutputs);
+if ~isempty(result.BackupFile)
+    lines{end + 1} = sprintf('Backup of previous model : %s', result.BackupFile);
+end
+if ~isempty(result.SubsystemName)
+    lines{end + 1} = sprintf('Contents wrapped in subsystem : %s', ...
+        result.SubsystemName);
+end
+if ~isempty(result.Notes)
+    lines{end + 1} = 'Notes:';
+    for noteIndex = 1:numel(result.Notes)
+        lines{end + 1} = ['  - ' result.Notes{noteIndex}];
+    end
+end
+if isempty(result.Warnings)
+    lines{end + 1} = 'No warnings.';
+else
+    lines{end + 1} = 'Warnings:';
+    for warningIndex = 1:numel(result.Warnings)
+        lines{end + 1} = ['  - ' result.Warnings{warningIndex}];
+    end
+end
+lines{end + 1} = '===============================================';
+logMany(log1, lines);
 
 state.LastGeneratedModel = result.TargetModel;
 setpref('teamtools', 'GeneratedModel', result.TargetModel);
 connModelEdit.Value = result.TargetModel;
+% FIX 2: Added the essential .m extension to allow downstream path validation on extraction
 destEdit.Value = [result.TargetModel, '_data.m'];
-
+logTo(log1, sprintf(['Extract destination (Tab 2) set to "%s_data.m" - ', ...
+    'edit it there if you want a different name.'], ...
+    result.TargetModel));
 refreshConnections();
-setStatus('Model generated and auto-arranged successfully.');
-notify(app, sprintf('Model generated successfully with automatic dynamic layout:\n%s', result.OutputFile), ...
-    'Generation complete', 'success');
+
+if isempty(result.Warnings)
+    setStatus('Model generated successfully.');
+    noteText = '';
+    if ~isempty(result.Notes)
+        noteText = sprintf('\n\n%d note(s) in the log (informational).', ...
+            numel(result.Notes));
+    end
+    notify(app, sprintf(['Model generated successfully:\n\n%s\n\n', ...
+        '%d internal connection(s), %d root input(s), %d root output(s).%s'], ...
+        result.OutputFile, result.Counts.Internal, ...
+        result.Counts.RootInputs, result.Counts.RootOutputs, noteText), ...
+        'Generation complete', 'success');
+else
+    setStatus('Model generated with warnings - see the log above.');
+    if ~isempty(regexpi(strjoin(result.Warnings, char(10)), ...
+            'could not update the diagram'))
+        extraText = ['Simulink could not update the diagram (see the ', ...
+            'log). Break a remaining algebraic loop in the Loop ', ...
+            'breaker tab: Refresh list, pick the looping connection, ', ...
+            'press Insert Unit Delay.'];
+    else
+        extraText = 'Read the warnings in the log above.';
+    end
+    notify(app, sprintf('Model generated with %d warning(s):\n\n%s\n\n%s', ...
+        numel(result.Warnings), result.OutputFile, extraText), ...
+        'Generation complete - check warnings', 'warning');
+end
 end
 
 function refreshConnections(~, ~)
 modelName = char(strtrim(connModelEdit.Value));
-if isempty(modelName), modelName = state.LastGeneratedModel; end
-if isempty(modelName), setStatus('Enter model name first.'); return; end
+if isempty(modelName)
+    modelName = state.LastGeneratedModel;
+end
+if isempty(modelName)
+    setStatus('Enter the generated model name first.');
+    return;
+end
+if ~isvarname(modelName)
+    setStatus(sprintf(['"%s" is not a valid model name. Use the model name ', ...
+        'only, e.g. "testtcs" - no spaces, dots, or slashes.'], modelName));
+    return;
+end
 if ~bdIsLoaded(modelName)
     insertDelayBtn.Enable = 'off';
-    try connDropDown.Items = {'(model is not open)'}; catch, end
-    setStatus(sprintf('Model "%s" is not open.', modelName));
+    try
+        connDropDown.Items = {'(model is not open)'};
+    catch
+    end
+    setStatus(sprintf('Model "%s" is not open in Simulink.', modelName));
     return;
 end
 
@@ -873,65 +1429,190 @@ try
 catch listError
     insertDelayBtn.Enable = 'off';
     logTo(log1, ['ERROR: ' errorDetails(listError)]);
+    notify(app, errorDetails(listError), 'Could not list connections', 'error');
     return;
 end
 
 if isempty(connections)
     state.Connections = {};
-    try connDropDown.Items = {'(no model-to-model connections found)'}; catch, end
+    try
+        connDropDown.Items = {'(no model-to-model connections found)'};
+    catch
+    end
     insertDelayBtn.Enable = 'off';
-    setStatus('No backward connections found.');
+    setStatus('No backward connections found in this model.');
+    logTo(log1, sprintf(['No backward connections found in "%s" ', ...
+        '(only bottom->top / right->left ones are listed; direct ', ...
+        'lines and From/Goto links are both detected).\n', ...
+        'Diagnostics: %d block(s) in diagram, %d model-reference ', ...
+        'block(s), %d connected model output(s), %d Goto block(s), ', ...
+        '%d From block(s), %d Unit Delay block(s), %d ambiguous ', ...
+        'From/Goto tag(s).\n', ...
+        'If this is NOT the generated parent model (its name, e.g. ', ...
+        '"testtcs", was filled in automatically after Generate), type ', ...
+        'the parent model name and press Refresh list again.'], ...
+        modelName, connStats.BlocksScanned, connStats.ModelBlocks, ...
+        connStats.ConnectedOutputs, connStats.GotoBlocks, ...
+        connStats.FromBlocks, connStats.UnitDelayBlocks, ...
+        connStats.AmbiguousTags));
     return;
 end
 
 state.Connections = num2cell(connections);
-delayedMask = cellfun(@(c) isfield(c, 'AlreadyDelayed') && c.AlreadyDelayed, state.Connections);
+% listModelConnections returns ONLY backward connections (bottom->top
+% / right->left) - forward ones never need a Unit Delay.
+delayedMask = cellfun(@(c) isfield(c, 'AlreadyDelayed') && c.AlreadyDelayed, ...
+    state.Connections);
 if chkShowAll.Value
     shownConnections = state.Connections;
+    filterMode = 'all';
 elseif chkDelayFilter.Value
     shownConnections = state.Connections(delayedMask);
+    filterMode = 'withdelay';
 else
     shownConnections = state.Connections(~delayedMask);
+    filterMode = 'needdelay';
 end
-
 if isempty(shownConnections)
+    state.Connections = {};
+    try
+        if strcmp(filterMode, 'withdelay')
+            placeholder = '(no connections with a Unit Delay)';
+        else
+            placeholder = '(every connection already has a Unit Delay)';
+        end
+        connDropDown.Items = {placeholder};
+        connDropDown.Value = placeholder;
+    catch
+    end
     insertDelayBtn.Enable = 'off';
-    setStatus('All backward connections already have Unit Delays.');
+    if strcmp(filterMode, 'withdelay')
+        setStatus('No connections with a Unit Delay (filter is on).');
+        logTo(log1, sprintf(['Listed %d connection(s) in "%s" - none of ', ...
+            'them has a Unit Delay yet (filter is on).'], ...
+            numel(connections), modelName));
+    else
+        setStatus('Nothing to do: every backward connection already has a Unit Delay.');
+        logTo(log1, sprintf(['All %d backward connection(s) in "%s" ', ...
+            'already have a Unit Delay.'], ...
+            numel(connections), modelName));
+    end
     return;
 end
-
 labels = cellfun(@(c) c.Label, shownConnections, 'UniformOutput', false);
-try connDropDown.Items = labels; connDropDown.Value = labels{1}; catch, end
+try
+    connDropDown.Items = labels;
+    connDropDown.Value = labels{1};
+catch
+    try
+        connDropDown.Value = labels{1};
+        connDropDown.Items = labels;
+    catch uiError
+        logTo(log1, ['ERROR: could not update the connection dropdown: ' ...
+            errorDetails(uiError)]);
+        notify(app, errorDetails(uiError), ...
+            'Could not show the connection list', 'error');
+        return;
+    end
+end
 insertDelayBtn.Enable = 'on';
-setStatus(sprintf('%d connection(s) listed - pick one.', numel(labels)));
+delayedCount = sum(delayedMask);
+switch filterMode
+    case 'all'
+        setStatus(sprintf('%d connection(s) listed (all) - pick one.', ...
+            numel(labels)));
+        logTo(log1, sprintf(['Listed %d connection(s) in "%s" (all; ', ...
+            'model blocks: %d, From/Goto links: %d, already delayed: ', ...
+            '%d).'], numel(labels), modelName, connStats.ModelBlocks, ...
+            connStats.FromGotoConnections, delayedCount));
+    case 'withdelay'
+        setStatus(sprintf(['%d of %d connection(s) shown ', ...
+            '(with Unit Delay) - pick one.'], numel(labels), ...
+            numel(state.Connections)));
+        logTo(log1, sprintf(['Listed %d of %d connection(s) in "%s" ', ...
+            '(with Unit Delay).'], numel(labels), ...
+            numel(state.Connections), modelName));
+    otherwise
+        setStatus(sprintf(['%d of %d connection(s) need a ', ...
+            'Unit Delay - pick one.'], numel(labels), ...
+            numel(state.Connections)));
+        logTo(log1, sprintf(['Listed %d of %d connection(s) in "%s" ', ...
+            '(only those still needing a Unit Delay).'], ...
+            numel(state.Connections), modelName));
+end
 end
 
 function insertDelay(~, ~)
-if isempty(state.Connections), return; end
+if isempty(state.Connections)
+    setStatus('Press Refresh list first.');
+    return;
+end
 selLabel = char(connDropDown.Value);
 selIndex = 0;
 for cIndex = 1:numel(state.Connections)
     if strcmp(state.Connections{cIndex}.Label, selLabel)
-        selIndex = cIndex; break;
+        selIndex = cIndex;
+        break;
     end
 end
-if selIndex == 0, return; end
+if selIndex == 0
+    setStatus('Pick a connection in the list first.');
+    return;
+end
 connection = state.Connections{selIndex};
+
+if isfield(connection, 'Kind') && strcmp(connection.Kind, 'fromgoto')
+    kindNote = sprintf(['This is a From/Goto connection: the delay is ', ...
+        'placed at the destination model''s input (inport level), ', ...
+        'right after the From block of tag "%s" - only this branch ', ...
+        'is delayed.'], connection.Tag);
+else
+    kindNote = ['The delay is placed at the destination model''s ', ...
+        'input (inport level), in line with that input port.'];
+end
+if isfield(connection, 'AlreadyDelayed') && connection.AlreadyDelayed
+    kindNote = [kindNote, newline, 'CAUTION: this path already contains ', ...
+        'a Unit Delay (inserted automatically). Adding another one here ', ...
+        'makes the total delay twice as long (z^-2).'];
+end
+answer = confirmDialog(app, ...
+    sprintf(['Insert a Unit Delay on this connection?\n\n%s\n\n%s'], ...
+    connection.Label, kindNote), ...
+    'Insert Unit Delay', 'Insert', 'Cancel');
+if ~answer
+    return;
+end
 
 try
     result = insertUnitDelayOnBranch(connection.System, ...
         connection.SrcBlockPath, connection.SrcPortIndex, ...
         connection.DstBlockPath, connection.DstPortIndex, ...
         struct('BlockSpacing', spacingPoints()));
-    save_system(strtok(connection.System, '/'));
+    topModel = strtok(connection.System, '/');
+    save_system(topModel);
+    % open the system that received the delay so the change is visible
+    % (with the main-subsystem wrap, the delay lands inside "model/Core")
+    try
+        open_system(connection.System);
+    catch
+    end
+    whereText = '';
+    if ~strcmp(connection.System, topModel)
+        whereText = sprintf(' inside subsystem "%s"', connection.System);
+    end
     logTo(log1, result.Message);
+    notify(app, sprintf(['%s\n\nThe model has been saved%s.'], ...
+        result.Message, whereText), 'Unit Delay inserted', 'success');
     refreshConnections();
 catch delayError
     logTo(log1, ['ERROR: ' errorDetails(delayError)]);
+    notify(app, errorDetails(delayError), 'Could not insert Unit Delay', 'error');
 end
 end
 
 function doConfigureSignals(~, ~)
+%DOCONFIGURESIGNALS Configure the selected Subsystem's signal objects.
+
 try
     signalReport = configureSubsystemSignals(struct( ...
         'ProcessInports',  logical(chkCfgInports.Value), ...
@@ -940,119 +1621,434 @@ try
         'MustResolve',     logical(chkCfgResolver.Value)));
 catch cfgError
     logTo(log1, ['ERROR: ' errorDetails(cfgError)]);
+    notify(app, errorDetails(cfgError), 'Configure signals failed', 'error');
+    setStatus('Configure signals failed - see the log.');
     return;
 end
-logTo(log1, 'Subsystem signals configured successfully.');
+
+reportLines = {'==== Configure Subsystem Signals ===='};
+if isempty(signalReport) || height(signalReport) == 0
+    reportLines{end + 1} = 'No Inport or Outport blocks were found.';
+else
+    % FIX 3: Cast arrays securely to guarantee robust table variable conversions 
+    % (handles cell arrays of chars, string arrays, categorical and numerical arrays)
+    dirCol  = string(signalReport.Direction);
+    portCol = double(signalReport.Port);
+    sigCol  = string(signalReport.Signal);
+    statCol = string(signalReport.Status);
+    
+    for rowIndex = 1:height(signalReport)
+        reportLines{end + 1} = sprintf('%s %g "%s": %s', ...
+            dirCol(rowIndex), ...
+            portCol(rowIndex), ...
+            sigCol(rowIndex), ...
+            statCol(rowIndex)); %#ok<AGROW>
+    end
+    reportLines{end + 1} = sprintf( ...
+        ['Configured: %d | Skipped: %d | Failed: %d ', ...
+         '(full details in the Command Window)'], ...
+        sum(statCol == "Configured"), ...
+        sum(statCol == "Skipped"), ...
+        sum(statCol == "Failed"));
+end
+logMany(log1, reportLines);
+setStatus('Subsystem signals configured - see the log above.');
+notify(app, ['Subsystem signal configuration finished.\n\n', ...
+    'The summary is in the log above; the full per-port report is in ', ...
+    'the Command Window.'], 'Configure signals', 'info');
 end
 
 % =========================================================================
-%  TAB 2 CALLBACKS
+%  NESTED CALLBACKS - TAB 2
 % =========================================================================
 function refreshSubsystem(~, ~)
 try
     ports = getSubsystemPorts();
     subsystemLabel.Text = ports.Path;
     subsystemLabel.FontColor = [0 0 0];
+    safeTooltip(subsystemLabel, ports.Path);
     items = {};
-    for portIndex = 1:numel(ports.InportNames), items{end + 1} = ['IN   ' ports.InportNames{portIndex}]; end %#ok<AGROW>
-    for portIndex = 1:numel(ports.OutportNames), items{end + 1} = ['OUT  ' ports.OutportNames{portIndex}]; end %#ok<AGROW>
+    for portIndex = 1:numel(ports.InportNames)
+        items{end + 1} = ['IN   ' ports.InportNames{portIndex}]; %#ok<AGROW>
+    end
+    for portIndex = 1:numel(ports.OutportNames)
+        items{end + 1} = ['OUT  ' ports.OutportNames{portIndex}]; %#ok<AGROW>
+    end
+    if isempty(items)
+        items = {'(no ports found)'};
+    end
     tagsList.Items = items;
+    tagsList.Value = items{1};
     setStatus('Subsystem selected.');
+    logTo(log2, ['Subsystem selected: ' ports.Path]);
 catch selectionError
     subsystemLabel.Text = '<no subsystem selected>';
     subsystemLabel.FontColor = [0.75 0 0];
     tagsList.Items = {};
+    setStatus('Select a subsystem in Simulink, then press Refresh.');
+    logTo(log2, ['Selection: ' selectionError.message]);
 end
 end
 
 function browseSearchFolder(~, ~)
-chosenFolder = uigetdir(pwd, 'Select search folder');
+startFolder = pwd;
+candidate = char(strtrim(searchEdit.Value));
+if isfolder(candidate)
+    startFolder = candidate;
+end
+chosenFolder = uigetdir(startFolder, ...
+    'Select the parent folder containing the .m files');
 bringAppToFront();
-if isequal(chosenFolder, 0), return; end
+if isequal(chosenFolder, 0)
+    return;
+end
 searchEdit.Value = chosenFolder;
+setpref('teamtools', 'SearchFolder', chosenFolder);
 end
 
 function browseOutputFile(~, ~)
-[name, folder] = uiputfile({'*.m', 'MATLAB files (*.m)'}, 'Select destination .m file');
+initialFile = fullfile(pwd, 'ExtractedAttributes.m');
+candidate = char(strtrim(searchEdit.Value));
+if isfolder(candidate)
+    initialFile = fullfile(candidate, 'ExtractedAttributes.m');
+end
+[name, folder] = uiputfile({'*.m', 'MATLAB files (*.m)'}, ...
+    'Select the destination MATLAB file', initialFile);
 bringAppToFront();
-if isequal(name, 0) || isequal(folder, 0), return; end
-destEdit.Value = fullfile(folder, name);
+if isequal(name, 0) || isequal(folder, 0)
+    return;
+end
+[~, baseName, extension] = fileparts(name);
+if isempty(extension)
+    name = [baseName '.m'];
+elseif ~strcmpi(extension, '.m')
+    notify(app, 'The destination must be a .m file.', ...
+        'Invalid destination', 'error');
+    return;
+end
+outputFile = fullfile(folder, name);
+destEdit.Value = outputFile;
+setpref('teamtools', 'OutputFile', outputFile);
 end
 
 function doExtract(~, ~)
-try ports = getSubsystemPorts(); catch, return; end
-searchFolder = char(strtrim(searchEdit.Value));
-if ~isfolder(searchFolder), return; end
-outputFile = char(strtrim(destEdit.Value));
-if isempty(outputFile), return; end
+try
+    ports = getSubsystemPorts();
+catch selectionError
+    notify(app, selectionError.message, 'No subsystem selected', 'warning');
+    return;
+end
+subsystemLabel.Text = ports.Path;
+subsystemLabel.FontColor = [0 0 0];
 
-options = struct('PortChoice', portDropDown.Value, 'CaseInsensitive', chkCase2.Value);
+searchFolder = char(strtrim(searchEdit.Value));
+if ~isfolder(searchFolder)
+    notify(app, 'Choose a valid search folder first (Browse...).', ...
+        'Missing folder', 'warning');
+    return;
+end
+
+outputFile = char(strtrim(destEdit.Value));
+[~, ~, outputExtension] = fileparts(outputFile);
+if isempty(outputFile) || ~strcmpi(outputExtension, '.m')
+    notify(app, 'The destination file must end with .m.', ...
+        'Invalid destination', 'warning');
+    return;
+end
+outputFolder = fileparts(outputFile);
+if isempty(outputFolder)
+    outputFile = fullfile(pwd, outputFile);
+elseif ~isfolder(outputFolder)
+    notify(app, 'The destination folder does not exist.', ...
+        'Invalid destination', 'warning');
+    return;
+end
+
+infoChoice = infoDropDown.Value;
+switch infoChoice
+    case 'Header only'
+        includeMetadata = true;
+        includeComments = false;
+    case 'Source comments only'
+        includeMetadata = false;
+        includeComments = true;
+    otherwise
+        includeMetadata = true;
+        includeComments = true;
+end
+
+options = struct( ...
+    'PortChoice',            portDropDown.Value, ...
+    'IncludeMetadata',       includeMetadata, ...
+    'IncludeSourceComments', includeComments, ...
+    'CaseInsensitive',       chkCase2.Value);
+
+setStatus('Extracting...');
+extractBtn.Enable = 'off';
 p = makeProgress(app, 'Extracting attributes');
 try
+    options.ProgressFcn = @(fraction, message) p.set(fraction, message);
+    options.CancelRequestedFcn = @() p.cancelled();
     result = extractAttributesCore(ports.Handle, searchFolder, outputFile, options);
     p.close();
-    openOutputBtn.Enable = 'on'; openFolderBtn.Enable = 'on';
-    state.ExtractOutput = result.OutputFile;
-    setStatus('Extraction complete.');
 catch extractError
     p.close();
+    extractBtn.Enable = 'on';
+    setStatus('Extraction failed.');
     logTo(log2, ['ERROR: ' errorDetails(extractError)]);
+    notify(app, errorDetails(extractError), 'Extraction failed', 'error');
+    return;
 end
+extractBtn.Enable = 'on';
+
+if result.Cancelled
+    setStatus('Extraction cancelled.');
+    logTo(log2, 'Extraction cancelled by user - no file was written.');
+    return;
+end
+
+state.ExtractOutput = result.OutputFile;
+setpref('teamtools', 'OutputFile', result.OutputFile);
+openOutputBtn.Enable = 'on';
+openFolderBtn.Enable = 'on';
+
+logMany(log2, renderExtractSummary(result));
+setStatus('Extraction complete.');
+notify(app, sprintf(['Extraction complete.\n\nFiles read: %d\n', ...
+    'Unique records: %d\n\nOutput:\n%s\n\nCheck the log for ', ...
+    'per-tag counts.'], result.FilesRead, result.UniqueMatches, ...
+    result.OutputFile), 'Extraction complete', 'success');
 end
 
 function openOutputFile(~, ~)
-if ~isempty(state.ExtractOutput), open(state.ExtractOutput); end
+if isempty(state.ExtractOutput)
+    return;
+end
+try
+    open(state.ExtractOutput);
+catch
+    setStatus('Could not open the output file.');
+end
 end
 
 function openOutputFolder(~, ~)
-if ~isempty(state.ExtractOutput), open(fileparts(state.ExtractOutput)); end
+if isempty(state.ExtractOutput)
+    return;
+end
+try
+    open(fileparts(state.ExtractOutput));
+catch
+    setStatus('Could not open the output folder.');
+end
 end
 
 function browseConvertPath(~, ~)
-[f, p] = uigetfile('*.m', 'Pick convert_m_to_sldd.m');
+%BROWSECONVERTPATH Pick the convert_m_to_sldd.m file.
+
+[pickedFile, pickedPath] = uigetfile('*.m', ...
+    'Pick convert_m_to_sldd.m');
 bringAppToFront();
-if ~isequal(f, 0), convertPathEdit.Value = fullfile(p, f); end
+if isequal(pickedFile, 0)
+    return;
+end
+convertPathEdit.Value = fullfile(pickedPath, pickedFile);
+setpref('teamtools', 'ConvertPath', convertPathEdit.Value);
 end
 
 function browseSlddDest(~, ~)
-f = uigetdir(pwd, 'Pick .sldd destination folder');
+%BROWSESLDDDEST Pick the folder the .sldd files are moved to.
+
+pickedFolder = uigetdir(pwd, 'Pick the folder for the .sldd file(s)');
 bringAppToFront();
-if ~isequal(f, 0), slddDestEdit.Value = f; end
+if isequal(pickedFolder, 0)
+    return;
+end
+slddDestEdit.Value = pickedFolder;
+setpref('teamtools', 'SlddDestFolder', pickedFolder);
 end
 
 function doConvertToSldd(~, ~)
+%DOCONVERTTOSLDD Run the team's convert_m_to_sldd on the extracted file.
+
 convertPath = char(strtrim(convertPathEdit.Value));
-if isempty(convertPath), return; end
+if isempty(convertPath)
+    notify(app, ['Enter the path of convert_m_to_sldd.m (or its ', ...
+        'folder) first - use Browse... to pick it.'], ...
+        'Missing path', 'warning');
+    return;
+end
+
+% the conversion input: the extracted attributes .m file
 mFile = state.ExtractOutput;
-if isempty(mFile) || ~isfile(mFile), return; end
-addpath(fileparts(convertPath));
+if isempty(mFile) || ~isfile(mFile)
+    candidate = char(strtrim(destEdit.Value));
+    if ~isempty(candidate) && isfile(candidate)
+        mFile = candidate;
+    end
+end
+if isempty(mFile) || ~isfile(mFile)
+    notify(app, ['Extract the attributes first - the extracted .m ', ...
+        'file is the input for the conversion (or point the ', ...
+        'destination file at an existing .m).'], ...
+        'No extracted file', 'warning');
+    return;
+end
+
+% the path field accepts the folder OR the .m file itself
+if isfolder(convertPath)
+    convertFolder = convertPath;
+elseif isfile(convertPath)
+    convertFolder = fileparts(convertPath);
+else
+    notify(app, sprintf('The path does not exist:\n%s', convertPath), ...
+        'Invalid path', 'error');
+    return;
+end
+addpath(convertFolder);
+if exist('convert_m_to_sldd', 'file') ~= 2
+    notify(app, sprintf(['convert_m_to_sldd.m was not found in:\n%s\n\n', ...
+        'Check the path (the file or its folder).'], convertFolder), ...
+        'Function not found', 'error');
+    return;
+end
+setpref('teamtools', 'ConvertPath', convertPath);
+
+% call it the way it is declared: a 0-input function is called without
+% arguments, otherwise the extracted file is passed; a plain script
+% (nargin fails) is run as-is
 try
-    convert_m_to_sldd();
-    setStatus('Converted to .sldd successfully.');
+    declaredInputs = nargin('convert_m_to_sldd');
+catch
+    declaredInputs = -1;
+end
+if declaredInputs <= 0
+    logTo(log2, ['NOTE: this convert_m_to_sldd takes no input - it ', ...
+        'scans its own root folder and may ignore the extracted ', ...
+        'file. If it creates nothing, check the root setting ', ...
+        'inside convert_m_to_sldd.m.']);
+end
+
+% resolve where the created .sldd files must end up: the field,
+% else the folder of the .m file - never the MATLAB current folder
+slddDest = char(strtrim(slddDestEdit.Value));
+if isfile(slddDest)
+    slddDest = fileparts(slddDest);
+end
+if isempty(slddDest)
+    slddDest = fileparts(mFile);
+end
+slddDest = absFolder(slddDest);
+if ~isempty(char(strtrim(slddDestEdit.Value)))
+    setpref('teamtools', 'SlddDestFolder', ...
+        char(strtrim(slddDestEdit.Value)));
+end
+if ~isfolder(slddDest)
+    logTo(log2, sprintf(['WARNING: "Save .sldd in" is not a folder:', ...
+        '\n  %s\nThe .sldd file(s) stay where the team function ', ...
+        'put them.'], slddDest));
+    slddDest = '';
+end
+
+% remember which .sldd files already exist, so the ones this run
+% creates (or overwrites) can be moved to the destination
+slddWatch = unique({absFolder(pwd); absFolder(fileparts(mFile)); ...
+    absFolder(convertFolder)});
+if ~isempty(slddDest)
+    slddWatch = unique([slddWatch; {slddDest}]);
+end
+slddBefore = struct('Path', {}, 'Modified', {});
+for slddWatchIndex = 1:numel(slddWatch)
+    slddBefore = [slddBefore, ...
+        slddFilesIn(slddWatch{slddWatchIndex})]; %#ok<AGROW>
+end
+
+setStatus('Running convert_m_to_sldd...');
+try
+    if declaredInputs == 0
+        convert_m_to_sldd();
+        callText = 'convert_m_to_sldd()';
+    elseif declaredInputs == -1
+        convert_m_to_sldd; %#ok<NASGU>
+        callText = 'convert_m_to_sldd';
+    else
+        convert_m_to_sldd(mFile);
+        callText = sprintf('convert_m_to_sldd(''%s'')', mFile);
+    end
 catch convertError
     logTo(log2, ['ERROR: ' errorDetails(convertError)]);
+    notify(app, errorDetails(convertError), ...
+        'convert_m_to_sldd failed', 'error');
+    setStatus('Conversion failed - see the log.');
+    return;
 end
+logTo(log2, sprintf('%s finished on:\n  %s', callText, mFile));
+
+% the .sldd files this run created or overwrote
+slddCreated = {};
+for slddWatchIndex = 1:numel(slddWatch)
+    slddNow = slddFilesIn(slddWatch{slddWatchIndex});
+    for slddFileIndex = 1:numel(slddNow)
+        slddMatch = find(strcmp({slddBefore.Path}, ...
+            slddNow(slddFileIndex).Path), 1);
+        if isempty(slddMatch) || ...
+                slddNow(slddFileIndex).Modified > ...
+                slddBefore(slddMatch).Modified
+            slddCreated{end + 1} = ...
+                slddNow(slddFileIndex).Path; %#ok<AGROW>
+        end
+    end
 end
 
-% Embedded getSubsystemPorts Helper
-function ports = getSubsystemPorts(subsystemHandle)
-if nargin < 1 || isempty(subsystemHandle), subsystemHandle = gcbh; end
-if isempty(subsystemHandle) || subsystemHandle <= 0
-    error('getSubsystemPorts:NoSelection', 'Select a subsystem in Simulink first.');
-end
-commonOptions = {'LookUnderMasks', 'on', 'FollowLinks', 'on', 'SearchDepth', 1};
-inportHandles = find_system(subsystemHandle, commonOptions{:}, 'BlockType', 'Inport');
-outportHandles = find_system(subsystemHandle, commonOptions{:}, 'BlockType', 'Outport');
-ports = struct('Handle', double(subsystemHandle), 'Path', getfullname(subsystemHandle), ...
-    'InportNames', {normSubNames(inportHandles)}, 'OutportNames', {normSubNames(outportHandles)});
+if isempty(slddCreated)
+    logTo(log2, ['No new or updated .sldd file was detected (looked ', ...
+        'in the current folder, the .m folder, the convert function ', ...
+        'folder and the destination - subfolders included). If the ', ...
+        'team function writes somewhere else, move it manually.']);
+    setStatus('Conversion finished - no .sldd detected.');
+    notify(app, sprintf(['%s finished, but no new .sldd file was ', ...
+        'detected.\n\nDetails are in the log.'], callText), ...
+        'Convert to .sldd', 'warning');
+    return;
 end
 
-function names = normSubNames(handles)
-if isempty(handles), names = {}; return; end
-names = get_param(handles, 'Name');
-if ischar(names), names = {names}; end
-names = unique(cellfun(@strtrim, names(~cellfun('isempty', names)), 'UniformOutput', false), 'stable');
-names = names(:).';
+slddLines = {};
+slddAllMoved = ~isempty(slddDest);
+for slddCreatedIndex = 1:numel(slddCreated)
+    [slddFileFolder, slddFileName] = ...
+        fileparts(slddCreated{slddCreatedIndex});
+    if isempty(slddDest) || strcmpi(slddFileFolder, slddDest)
+        slddLines{end + 1} = sprintf('  %s  (in %s)', ...
+            slddFileName, slddFileFolder); %#ok<AGROW>
+    else
+        slddTarget = fullfile(slddDest, slddFileName);
+        try
+            if isfile(slddTarget)
+                delete(slddTarget);
+            end
+            movefile(slddCreated{slddCreatedIndex}, slddTarget);
+            slddLines{end + 1} = sprintf('  %s  moved to %s', ...
+                slddFileName, slddDest); %#ok<AGROW>
+        catch slddMoveError
+            slddAllMoved = false;
+            slddLines{end + 1} = sprintf( ...
+                '  %s  could NOT be moved to %s (%s)', ...
+                slddFileName, slddDest, slddMoveError.message); %#ok<AGROW>
+        end
+    end
+end
+logTo(log2, sprintf('.sldd file(s) created by this run:\n%s', ...
+    strjoin(slddLines, newline)));
+if isempty(slddDest) || ~slddAllMoved
+    setStatus('Conversion finished - check the log for the .sldd.');
+    notify(app, sprintf(['%s finished.\n\nThe .sldd location is in ', ...
+        'the log.'], callText), 'Convert to .sldd', 'warning');
+else
+    setStatus(sprintf('%d .sldd file(s) in: %s', ...
+        numel(slddCreated), slddDest));
+    notify(app, sprintf(['%s finished.\n\n%d .sldd file(s) are ', ...
+        'in:\n%s'], callText, numel(slddCreated), slddDest), ...
+        'Convert to .sldd', 'success');
+end
 end
 
 end
@@ -1060,49 +2056,165 @@ end
 % =========================================================================
 %  LOCAL FUNCTIONS
 % =========================================================================
-function p = makeProgress(appFigure, title)
-try
-    dialogHandle = uiprogressdlg(appFigure, 'Title', title, 'Message', 'Preparing...', 'Indeterminate', 'on', 'Cancelable', 'on');
-catch
-    dialogHandle = uiprogressdlg(appFigure, 'Title', title, 'Message', 'Preparing...', 'Indeterminate', 'on');
+function ports = getSubsystemPorts(subsystemHandle)
+%GETSUBSYSTEMPORTS Immediate Inport/Outport names of a Simulink subsystem.
+
+if nargin < 1 || isempty(subsystemHandle)
+    subsystemHandle = gcbh;
 end
-p.set = @(f, m) progressSet(dialogHandle, f, m);
-p.cancelled = @() progressCancelled(dialogHandle);
+
+if isempty(subsystemHandle) || ~isnumeric(subsystemHandle) || ...
+        ~isscalar(subsystemHandle) || subsystemHandle == 0 || subsystemHandle == -1
+    error('getSubsystemPorts:NoSelection', ...
+        ['No Simulink block is selected. Open the model, click the ', ...
+         'required subsystem, then press Refresh.']);
+end
+
+try
+    blockType = get_param(subsystemHandle, 'BlockType');
+catch
+    error('getSubsystemPorts:NoSelection', ...
+        ['The selected block is no longer available. Open the model, ', ...
+         'click the required subsystem, then press Refresh.']);
+end
+
+if ~strcmp(blockType, 'SubSystem')
+    error('getSubsystemPorts:NotSubsystem', ...
+        'The selected block is not a subsystem: %s', ...
+        getfullname(subsystemHandle));
+end
+
+commonOptions = {'LookUnderMasks', 'on', 'FollowLinks', 'on', 'SearchDepth', 1};
+
+inportHandles = find_system(subsystemHandle, commonOptions{:}, ...
+    'BlockType', 'Inport');
+outportHandles = find_system(subsystemHandle, commonOptions{:}, ...
+    'BlockType', 'Outport');
+
+ports = struct();
+ports.Handle = double(subsystemHandle);
+ports.Path = getfullname(subsystemHandle);
+ports.InportNames = normalizeSubsystemBlockNames(inportHandles);
+ports.OutportNames = normalizeSubsystemBlockNames(outportHandles);
+end
+
+function names = normalizeSubsystemBlockNames(blockHandles)
+if isempty(blockHandles)
+    names = {};
+    return;
+end
+names = get_param(blockHandles, 'Name');
+if ischar(names)
+    names = {names};
+end
+names = cellfun(@strtrim, names, 'UniformOutput', false);
+names = names(~cellfun('isempty', names));
+names = unique(names, 'stable');
+names = names(:).';
+end
+function p = makeProgress(appFigure, title)
+%MAKEPROGRESS Progress dialog with version-safe cancel support.
+
+cancelable = true;
+try
+    dialogHandle = uiprogressdlg(appFigure, 'Title', title, ...
+        'Message', 'Preparing...', 'Indeterminate', 'on', 'Cancelable', 'on');
+catch
+    dialogHandle = uiprogressdlg(appFigure, 'Title', title, ...
+        'Message', 'Preparing...', 'Indeterminate', 'on');
+    cancelable = false;
+end
+
+p.set = @(fraction, message) progressSet(dialogHandle, fraction, message);
+p.cancelled = @() progressCancelled(dialogHandle, cancelable);
 p.close = @() progressClose(dialogHandle);
 end
 
-function progressSet(dh, f, m)
-if isvalid(dh), try dh.Indeterminate = 'off'; dh.Value = f; dh.Message = char(m); catch, end; drawnow limitrate; end
+function progressSet(dialogHandle, fraction, message)
+if isvalid(dialogHandle)
+    try
+        dialogHandle.Indeterminate = 'off';
+        dialogHandle.Value = fraction;
+        dialogHandle.Message = char(message);
+    catch
+    end
+    drawnow limitrate;
+end
 end
 
-function tf = progressCancelled(dh)
+function tf = progressCancelled(dialogHandle, cancelable)
 tf = false;
-if isvalid(dh) && isprop(dh, 'CancelRequested'), tf = logical(dh.CancelRequested); end
+if cancelable && isvalid(dialogHandle) && isprop(dialogHandle, 'CancelRequested')
+    tf = logical(dialogHandle.CancelRequested);
+end
 end
 
-function progressClose(dh)
-if ~isempty(dh) && isvalid(dh), close(dh); end
+function progressClose(dialogHandle)
+if ~isempty(dialogHandle) && isvalid(dialogHandle)
+    close(dialogHandle);
+end
 end
 
 function notify(appFigure, message, title, icon)
-try uialert(appFigure, char(message), title, 'Icon', icon); catch, msgbox(char(message), title); end
+%NOTIFY Alert dialog with graceful fallbacks on older releases.
+
+try
+    uialert(appFigure, char(message), title, 'Icon', icon);
+catch
+    try
+        uialert(appFigure, char(message), title, 'Icon', 'info');
+    catch
+        msgbox(char(message), title);
+    end
+end
 end
 
 function safeTooltip(component, text)
-try component.Tooltip = char(text); catch, end
+%SAFETOOLTIP Set a tooltip when the release supports it.
+
+try
+    component.Tooltip = char(text);
+catch
+end
 end
 
 function tf = confirmDialog(appFigure, message, title, okLabel, cancelLabel)
+%CONFIRMDIALOG Two-button confirm dialog for any MATLAB release.
+%uiconfirm renamed its options around R2021a ('Buttons'/'DefaultButton'
+%became 'Options'/'DefaultOption'/'CancelOption'), so try the old names,
+%then the new names, then fall back to questdlg, which works everywhere.
+
 tf = false;
 try
-    tf = dialogChoice(uiconfirm(appFigure, char(message), char(title), 'Buttons', {okLabel, cancelLabel}, ...
-        'DefaultButton', cancelLabel, 'CancelButton', cancelLabel, 'Icon', 'warning'), okLabel);
+    tf = dialogChoice(uiconfirm(appFigure, char(message), char(title), ...
+        'Buttons', {okLabel, cancelLabel}, ...
+        'DefaultButton', cancelLabel, ...
+        'CancelButton', cancelLabel, ...
+        'Icon', 'warning'), okLabel);
     return;
 catch
+end
+try
+    tf = dialogChoice(uiconfirm(appFigure, char(message), char(title), ...
+        'Options', {okLabel, cancelLabel}, ...
+        'DefaultOption', cancelLabel, ...
+        'CancelOption', cancelLabel, ...
+        'Icon', 'warning'), okLabel);
+    return;
+catch
+end
+try
+    answer = questdlg(char(message), char(title), ...
+        char(okLabel), char(cancelLabel), char(cancelLabel));
+    tf = strcmp(char(answer), char(okLabel));
+catch
+    tf = false;
 end
 end
 
 function tf = dialogChoice(answer, okLabel)
+%DIALOGCHOICE Extract the pressed button from a uiconfirm response.
+
 if isstruct(answer) && isfield(answer, 'SelectedButton')
     tf = strcmp(char(answer.SelectedButton), char(okLabel));
 elseif ischar(answer)
@@ -1112,560 +2224,355 @@ else
 end
 end
 
+function location = errorLocation(err)
+%ERRORLOCATION Short "function, line N" description of an error's origin.
+
+location = '';
+try
+    if isstruct(err) && isfield(err, 'stack') && ~isempty(err.stack)
+        location = sprintf('%s, line %d', err.stack(1).name, ...
+            err.stack(1).line);
+    end
+catch
+end
+end
+
 function details = errorDetails(err)
+%ERRORDETAILS Message plus the full cause chain of an error.
+%Simulink failures often report "Error due to multiple causes." with the
+%real reason hidden in err.cause - this surfaces everything.
+
 details = strtrim(char(err.message));
+if isempty(details)
+    details = '(no message)';
+end
 for groupIndex = 1:numel(err.cause)
     causeGroup = err.cause{groupIndex};
     for causeIndex = 1:numel(causeGroup)
         causeText = strtrim(char(causeGroup(causeIndex).message));
-        if ~isempty(causeText), details = [details newline '   caused by: ' causeText]; end
+        if ~isempty(causeText)
+            details = [details newline '   caused by: ' causeText]; %#ok<AGROW>
+        end
     end
 end
+% Simulink messages contain clickable hyperlinks like
+% <a href="matlab:...">name</a> - keep only the visible text.
 details = regexprep(details, '<a[^>]*>\s*([^<]*?)\s*</a>', '$1');
+
+location = errorLocation(err);
+if isempty(location)
+    for groupIndex = 1:numel(err.cause)
+        causeGroup = err.cause{groupIndex};
+        for causeIndex = 1:numel(causeGroup)
+            if ~isempty(causeGroup(causeIndex).stack)
+                location = errorLocation(causeGroup(causeIndex));
+                break;
+            end
+        end
+        if ~isempty(location)
+            break;
+        end
+    end
+end
+if ~isempty(location)
+    details = [details '   [' location ']'];
+end
 end
 
 function values = asCell(value)
-if isempty(value), values = {}; elseif ischar(value), values = {value}; else, values = value(:)'; end
+%ASCELL Listbox Value as a row cell array (handles single and multi mode).
+
+if isempty(value)
+    values = {};
+elseif ischar(value)
+    values = {value};
+else
+    values = value(:)';
+end
 end
 
 function enableMultiSelect(listBox)
-try listBox.Multiselect = 'on'; catch, end
+%ENABLEMULTISELECT Turn on multi-selection where the release supports it.
+% The documented property name is 'Multiselect' (lowercase s). Dot
+% access is case-sensitive, so a wrong spelling silently disables
+% multi-selection - try several routes and stay quiet when the release
+% has no multi-select list box at all (R2020a).
+
+try
+    listBox.Multiselect = 'on';
+    return;
+catch
+end
+try
+    set(listBox, 'Multiselect', 'on');   % case-insensitive route
+    return;
+catch
+end
+try
+    listBox.MultiSelect = 'on';          % alternate spelling, just in case
+catch
+end
+end
+
+function v = gapValue(editField, fallback, prefKey, minValue)
+%GAPVALUE Read one spacing field: fallback when empty, minimum kept,
+% and the value is remembered in the preferences.
+
+try
+    v = round(double(editField.Value));
+catch
+    v = fallback;
+end
+if isempty(v) || isnan(v) || v < minValue
+    v = fallback;
+end
+try
+    setpref('teamtools', prefKey, v);
+catch
+end
+end
+
+function out = absFolder(in)
+%ABSFOLDER Absolute, tidied version of a folder path (for compare).
+
+in = char(strtrim(in));
+if isempty(in)
+    out = pwd;
+    return;
+end
+if (numel(in) >= 2 && in(2) == ':') || in(1) == filesep
+    out = in;
+else
+    out = fullfile(pwd, in);
+end
+% drop trailing file separators and trailing '.' segments
+% ('C:\work\.' -> 'C:\work'), but never touch ordinary names
+while numel(out) > 3
+    if out(end) == filesep
+        out = out(1:end-1);
+    elseif out(end) == '.' && out(end-1) == filesep
+        out = out(1:end-1);
+        if out(end) == filesep
+            out = out(1:end-1);
+        end
+    else
+        break;
+    end
+end
+end
+
+function files = slddFilesIn(folder)
+%SLDDFILESIN The .sldd files in a folder with their modification times.
+
+files = struct('Path', {}, 'Modified', {});
+if isfolder(folder)
+    % '**' also finds .sldd files in SUBFOLDERS (e.g. a root folder
+    % the team function uses inside the current folder)
+    listing = dir(fullfile(folder, '**', '*.sldd'));
+    for fileIndex = 1:numel(listing)
+        if ~listing(fileIndex).isdir
+            files(end + 1) = struct( ...
+                'Path', fullfile(listing(fileIndex).folder, ...
+                listing(fileIndex).name), ...
+                'Modified', listing(fileIndex).datenum); %#ok<AGROW>
+        end
+    end
+end
+end
+
+function tf = cacheFolderWritable(folder)
+%CACHEFOLDERWRITABLE True when files can be created in the folder.
+
+tf = false;
+try
+    probeFile = fullfile(folder, 'teamtools_probe.tmp');
+    probeId = fopen(probeFile, 'w');
+    if probeId > 0
+        fclose(probeId);
+        delete(probeFile);
+        tf = true;
+    end
+catch
+end
 end
 
 function setListSelection(list, values, wasChar)
-if isempty(values), return; end
-if wasChar, list.Value = values{1}; else, try list.Value = values; catch, list.Value = values{1}; end; end
+%SETLISTSELECTION Set a list selection safely in single- or multi-select mode.
+
+if isempty(values)
+    return;
+end
+if wasChar
+    list.Value = values{1};
+else
+    try
+        list.Value = values;
+    catch
+        list.Value = values{1};
+    end
+end
 end
 
 function logTo(area, message)
+%LOGTO Append one timestamped line to a log area.
+% The same line is echoed to the command window so the session
+% diary (log.txt, started at app launch) records it too.
+
 stamp = char(datetime('now', 'Format', 'HH:mm:ss'));
 text = [stamp, '  ', char(message)];
-try fprintf('%s\n', text); catch, end
-lines = area.Value; if ischar(lines), lines = {lines}; end
-lines = [lines; {text}]; if numel(lines) > 500, lines = lines(end - 499:end); end
-area.Value = lines; drawnow limitrate;
+try
+    fprintf('%s\n', text);
+catch
+end
+lines = area.Value;
+if ischar(lines)
+    lines = {lines};
+end
+lines = [lines; {text}]; %#ok<AGROW>
+if numel(lines) > 500
+    lines = lines(end - 499:end);
+end
+area.Value = lines;
+drawnow limitrate;
 end
 
 function logMany(area, newLines)
-if isempty(newLines), return; end
-lines = area.Value; if ischar(lines), lines = {lines}; end
+%LOGMANY Append a block of lines to a log area.
+% The block is echoed to the command window so the session diary
+% (log.txt, started at app launch) records it too.
+
+if isempty(newLines)
+    return;
+end
+lines = area.Value;
+if ischar(lines)
+    lines = {lines};
+end
 stamp = char(datetime('now', 'Format', 'HH:mm:ss'));
 lines = [lines; {['---- ', stamp, ' ----']}; newLines(:)];
-if numel(lines) > 500, lines = lines(end - 499:end); end
-area.Value = lines; drawnow limitrate;
+if numel(lines) > 500
+    lines = lines(end - 499:end);
+end
+area.Value = lines;
+try
+    fprintf('---- %s ----\n', stamp);
+    fprintf('%s\n', newLines{:});
+catch
+end
+drawnow limitrate;
 end
 
 function files = discoverModelFiles(folder)
+%DISCOVERMODELFILES .slx/.mdl files under a folder (recursive).
+
 slxFiles = dir(fullfile(folder, '**', '*.slx'));
 mdlFiles = dir(fullfile(folder, '**', '*.mdl'));
 files = [slxFiles; mdlFiles];
 end
 
 function relativePart = relativePart(fullPath, rootFolder)
+%RELATIVEPART Subfolder part of fullPath relative to rootFolder ('' if none).
+
 rootWithSeparator = [char(rootFolder) filesep];
 if strncmpi(fullPath, rootWithSeparator, numel(rootWithSeparator))
     relativePart = fullPath(numel(rootWithSeparator) + 1:end);
     cutAt = strfind(relativePart, filesep);
-    if ~isempty(cutAt), relativePart = relativePart(1:cutAt(end) - 1); end
+    if ~isempty(cutAt)
+        relativePart = relativePart(1:cutAt(end) - 1);
+    end
 else
     relativePart = '';
 end
 end
 
 function lines = renderPlanLines(result)
+%RENDERPLANLINES Human-readable preview of the generator plan.
+
 lines = {};
 lines{end + 1} = '================ PREVIEW ================';
-lines{end + 1} = sprintf('Generated model: %s', result.TargetModel);
+lines{end + 1} = sprintf('Generated model: %s (not created yet)', ...
+    result.TargetModel);
 for modelIndex = 1:numel(result.Models)
     model = result.Models(modelIndex);
-    lines{end + 1} = sprintf('  %d. %-20s %d in, %d out', modelIndex, model.Name, numel(model.InputNames), numel(model.OutputNames));
+    lines{end + 1} = sprintf('  %d. %-20s %d in, %d out', modelIndex, ...
+        model.Name, numel(model.InputNames), numel(model.OutputNames));
+end
+if ~isempty(result.ConfigParamNames)
+    lines{end + 1} = 'Configuration (all referenced models match):';
+    for paramIndex = 1:numel(result.ConfigParamNames)
+        lines{end + 1} = sprintf('  %s = %s', ...
+            result.ConfigParamNames{paramIndex}, ...
+            result.ConfigParamValues{paramIndex});
+    end
+end
+lines{end + 1} = sprintf('Internal connections (%d):', result.Counts.Internal);
+for connectionIndex = 1:numel(result.InternalConnections)
+    connection = result.InternalConnections(connectionIndex);
+    lines{end + 1} = sprintf('  %s.%s  -->  %s.%s', ...
+        connection.SrcModel, connection.SrcPort, ...
+        connection.DstModel, connection.DstPort);
+end
+lines{end + 1} = sprintf('Root inputs (%d):', result.Counts.RootInputs);
+for inputIndex = 1:numel(result.RootInputs)
+    lines{end + 1} = sprintf('  %s  (feeds: %s)', ...
+        result.RootInputs(inputIndex).Name, ...
+        strjoin(result.RootInputs(inputIndex).DestinationModels(:), ', '));
+end
+lines{end + 1} = sprintf('Root outputs (%d):', result.Counts.RootOutputs);
+for outputIndex = 1:numel(result.RootOutputs)
+    lines{end + 1} = sprintf('  %s  (from %s.%s)', ...
+        result.RootOutputs(outputIndex).Name, ...
+        result.RootOutputs(outputIndex).SourceModel, ...
+        result.RootOutputs(outputIndex).SourcePort);
+end
+if ~isempty(result.Notes)
+    lines{end + 1} = 'Notes:';
+    for noteIndex = 1:numel(result.Notes)
+        lines{end + 1} = ['  - ' noteIndex];
+    end
+end
+if isempty(result.Warnings)
+    lines{end + 1} = 'No warnings.';
+else
+    lines{end + 1} = 'Warnings:';
+    for warningIndex = 1:numel(result.Warnings)
+        lines{end + 1} = ['  - ' result.Warnings{warningIndex}];
+    end
 end
 lines{end + 1} = '==========================================';
 end
 
+function lines = renderExtractSummary(result)
+%RENDEREXTRACTSUMMARY Human-readable extraction summary.
+
+lines = {};
+lines{end + 1} = sprintf('Extraction finished for: %s', result.Subsystem);
+lines{end + 1} = sprintf('Files found: %d | read: %d | skipped: %d', ...
+    result.FilesFound, result.FilesRead, result.FilesSkipped);
+lines{end + 1} = sprintf('Unique records written: %d', result.UniqueMatches);
+lines{end + 1} = 'Records per tag:';
+for tagIndex = 1:numel(result.Tags)
+    marker = '';
+    if result.Tags(tagIndex).Count == 0
+        marker = '   <-- no records found (check the port name)';
+    end
+    lines{end + 1} = sprintf('   %-25s %d%s', result.Tags(tagIndex).Name, ...
+        result.Tags(tagIndex).Count, marker);
+end
+lines{end + 1} = ['Output: ' result.OutputFile];
+if ~isempty(result.Warnings)
+    lines{end + 1} = 'Warnings:';
+    for warningIndex = 1:numel(result.Warnings)
+        lines{end + 1} = ['   - ' result.Warnings{warningIndex}];
+    end
+end
+end
+
 function position = centeredPosition(width, height)
+%CENTEREDPOSITION Screen-centered figure position.
+
 screenSize = get(groot, 'ScreenSize');
 left = max(1, round((screenSize(3) - width) / 2));
 bottom = max(1, round((screenSize(4) - height) / 2));
 position = [left bottom width height];
-end
-
-% =========================================================================
-%  CORE IMPLEMENTATION ENGINE
-% =========================================================================
-
-function result = buildParentModelCore(folder, models, modelName, options)
-    result = struct('Cancelled', false, 'TargetModel', modelName, ...
-                    'OutputFile', '', 'Models', struct('Name', {}, 'InputNames', {}, 'OutputNames', {}));
-
-    allFiles = discoverModelFiles(folder);
-    modelPaths = struct();
-    for i = 1:numel(models)
-        mName = models{i};
-        found = false;
-        for j = 1:numel(allFiles)
-            [~, fName] = fileparts(allFiles(j).name);
-            if strcmpi(fName, mName)
-                modelPaths.(mName) = fullfile(allFiles(j).folder, allFiles(j).name);
-                found = true;
-                break;
-            end
-        end
-        if ~found
-            error('Model "%s" not found in search directory.', mName);
-        end
-    end
-
-    modelsMeta = [];
-    for i = 1:numel(models)
-        mName = models{i};
-        mPath = modelPaths.(mName);
-        
-        wasLoaded = bdIsLoaded(mName);
-        if ~wasLoaded
-            load_system(mPath);
-        end
-        
-        inBlks = find_system(mName, 'SearchDepth', 1, 'BlockType', 'Inport');
-        if ~isempty(inBlks)
-            portsNum = cellfun(@(x) str2double(get_param(x, 'Port')), inBlks);
-            [~, idx] = sort(portsNum);
-            inBlks = inBlks(idx);
-            inNames = get_param(inBlks, 'Name');
-            if ischar(inNames), inNames = {inNames}; end
-        else
-            inNames = {};
-        end
-        
-        outBlks = find_system(mName, 'SearchDepth', 1, 'BlockType', 'Outport');
-        if ~isempty(outBlks)
-            portsNum = cellfun(@(x) str2double(get_param(x, 'Port')), outBlks);
-            [~, idx] = sort(portsNum);
-            outBlks = outBlks(idx);
-            outNames = get_param(outBlks, 'Name');
-            if ischar(outNames), outNames = {outNames}; end
-        else
-            outNames = {};
-        end
-        
-        meta = struct('Name', mName, 'Path', mPath, 'InputNames', {inNames}, 'OutputNames', {outNames}, 'WasLoaded', wasLoaded);
-        modelsMeta = [modelsMeta; meta]; %#ok<AGROW>
-    end
-    
-    result.Models = modelsMeta;
-    
-    if options.PreviewOnly
-        return;
-    end
-    
-    targetFile = fullfile(options.OutputFolder, [modelName '.slx']);
-    
-    if bdIsLoaded(modelName)
-        close_system(modelName, 0);
-    end
-    if isfile(targetFile) && options.BackupExisting
-        [p, n, e] = fileparts(targetFile);
-        copyfile(targetFile, fullfile(p, [n '.bak']));
-    end
-    
-    new_system(modelName);
-    open_system(modelName);
-    
-    set_param(modelName, 'Solver', 'FixedStepDiscrete');
-    
-    blockHandles = [];
-    refBlockPaths = cell(numel(models), 1);
-    
-    spacing = options.BlockSpacing;
-    x = 150; y = 150;
-    
-    palette = {'LightBlue', 'Green', 'Yellow', 'Cyan', 'Orange', 'Magenta', 'Gray'};
-    
-    for i = 1:numel(models)
-        mName = models{i};
-        numIn = numel(modelsMeta(i).InputNames);
-        numOut = numel(modelsMeta(i).OutputNames);
-        blockHeight = max(80, max(numIn, numOut) * 35);
-        blockWidth = 160;
-        
-        pos = [x, y, x + blockWidth, y + blockHeight];
-        blockPath = [modelName '/' mName];
-        h = add_block('simulink/Ports & Subsystems/Model Reference', blockPath, ...
-            'Position', pos, 'MakeNameUnique', 'on');
-        blockHandles = [blockHandles; h]; %#ok<AGROW>
-        
-        actualBlockName = get_param(h, 'Name');
-        refBlockPaths{i} = [modelName '/' actualBlockName];
-        
-        set_param(h, 'ModelName', mName);
-        
-        if options.ColorBlocks
-            color = palette{mod(i-1, numel(palette)) + 1};
-            set_param(h, 'BackgroundColor', color);
-        end
-        
-        if strcmp(options.Layout, 'horizontal')
-            x = x + blockWidth + spacing;
-        else
-            y = y + blockHeight + spacing;
-        end
-    end
-    
-    connections = {};
-    for dstIdx = 1:numel(models)
-        dstMeta = modelsMeta(dstIdx);
-        dstBlock = refBlockPaths{dstIdx};
-        
-        for portInIdx = 1:numel(dstMeta.InputNames)
-            inName = dstMeta.InputNames{portInIdx};
-            matched = false;
-            
-            for srcIdx = 1:numel(models)
-                if srcIdx == dstIdx, continue; end
-                srcMeta = modelsMeta(srcIdx);
-                srcBlock = refBlockPaths{srcIdx};
-                
-                for portOutIdx = 1:numel(srcMeta.OutputNames)
-                    outName = srcMeta.OutputNames{portOutIdx};
-                    
-                    if options.CaseInsensitiveMatch
-                        isMatch = strcmpi(inName, outName);
-                    else
-                        isMatch = strcmp(inName, outName);
-                    end
-                    
-                    if isMatch
-                        connections{end+1} = struct(...
-                            'SrcBlock', srcBlock, 'SrcIdx', srcIdx, 'SrcPort', portOutIdx, ...
-                            'DstBlock', dstBlock, 'DstIdx', dstIdx, 'DstPort', portInIdx, ...
-                            'SignalName', outName); %#ok<AGROW>
-                        matched = true;
-                        break;
-                    end
-                end
-                if matched, break; end
-            end
-        end
-    end
-    
-    isLines = strcmp(options.ConnectionMethod, 'lines');
-    gotoTags = struct();
-    
-    for i = 1:numel(connections)
-        conn = connections{i};
-        isFeedback = (conn.SrcIdx >= conn.DstIdx);
-        
-        if isLines
-            if options.AutoDelayFeedback && isFeedback
-                srcPos = get_param(conn.SrcBlock, 'Position');
-                dstPos = get_param(conn.DstBlock, 'Position');
-                midY = round((srcPos(2) + dstPos(4)) / 2);
-                midX = round((srcPos(1) + dstPos(3)) / 2);
-                
-                delayName = [modelName '/Delay_' conn.SignalName];
-                hDelay = add_block('simulink/Discrete/Unit Delay', delayName, ...
-                    'Position', [midX - 15, midY - 15, midX + 15, midY + 15], 'MakeNameUnique', 'on');
-                blockHandles = [blockHandles; hDelay]; %#ok<AGROW>
-                
-                actualDelayName = get_param(hDelay, 'Name');
-                
-                add_line(modelName, [get_param(conn.SrcBlock, 'Name') '/' num2str(conn.SrcPort)], ...
-                    [actualDelayName '/1'], 'autorouting', 'on');
-                add_line(modelName, [actualDelayName '/1'], ...
-                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
-            else
-                add_line(modelName, [get_param(conn.SrcBlock, 'Name') '/' num2str(conn.SrcPort)], ...
-                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
-            end
-        else
-            tag = matlab.lang.makeValidName(conn.SignalName);
-            srcKey = sprintf('b%d_p%d', conn.SrcIdx, conn.SrcPort);
-            if ~isfield(gotoTags, srcKey)
-                srcPos = get_param(conn.SrcBlock, 'Position');
-                numPorts = numel(modelsMeta(conn.SrcIdx).OutputNames);
-                pY = srcPos(2) + (srcPos(4) - srcPos(2)) * (conn.SrcPort / (numPorts + 1));
-                gotoPos = [srcPos(3) + 30, pY - 10, srcPos(3) + 90, pY + 10];
-                
-                gotoPath = [modelName '/Goto_' tag];
-                hGoto = add_block('simulink/Signal Routing/Goto', gotoPath, ...
-                    'Position', gotoPos, 'MakeNameUnique', 'on');
-                blockHandles = [blockHandles; hGoto]; %#ok<AGROW>
-                
-                actualGotoName = get_param(hGoto, 'Name');
-                set_param(hGoto, 'GotoTag', tag, 'TagVisibility', 'local');
-                
-                add_line(modelName, [get_param(conn.SrcBlock, 'Name') '/' num2str(conn.SrcPort)], ...
-                    [actualGotoName '/1'], 'autorouting', 'on');
-                
-                gotoTags.(srcKey) = tag;
-            end
-            
-            dstPos = get_param(conn.DstBlock, 'Position');
-            numPorts = numel(modelsMeta(conn.DstIdx).InputNames);
-            pY = dstPos(2) + (dstPos(4) - dstPos(2)) * (conn.DstPort / (numPorts + 1));
-            fromPos = [dstPos(1) - 90, pY - 10, dstPos(1) - 30, pY + 10];
-            
-            fromPath = [modelName '/From_' tag];
-            hFrom = add_block('simulink/Signal Routing/From', fromPath, ...
-                'Position', fromPos, 'MakeNameUnique', 'on');
-            blockHandles = [blockHandles; hFrom]; %#ok<AGROW>
-            
-            actualFromName = get_param(hFrom, 'Name');
-            set_param(hFrom, 'GotoTag', tag);
-            
-            if options.AutoDelayFeedback && isFeedback
-                delayPos = [fromPos(3) + 5, pY - 10, fromPos(3) + 20, pY + 10];
-                delayPath = [modelName '/Delay_' tag];
-                hDelay = add_block('simulink/Discrete/Unit Delay', delayPath, ...
-                    'Position', delayPos, 'MakeNameUnique', 'on');
-                blockHandles = [blockHandles; hDelay]; %#ok<AGROW>
-                
-                actualDelayName = get_param(hDelay, 'Name');
-                
-                add_line(modelName, [actualFromName '/1'], [actualDelayName '/1'], 'autorouting', 'on');
-                add_line(modelName, [actualDelayName '/1'], ...
-                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
-            else
-                add_line(modelName, [actualFromName '/1'], ...
-                    [get_param(conn.DstBlock, 'Name') '/' num2str(conn.DstPort)], 'autorouting', 'on');
-            end
-        end
-    end
-    
-    for i = 1:numel(models)
-        meta = modelsMeta(i);
-        block = refBlockPaths{i};
-        blockPos = get_param(block, 'Position');
-        
-        for pIdx = 1:numel(meta.InputNames)
-            inName = meta.InputNames{pIdx};
-            isConnected = false;
-            for k = 1:numel(connections)
-                if strcmp(connections{k}.DstBlock, block) && connections{k}.DstPort == pIdx
-                    isConnected = true;
-                    break;
-                end
-            end
-            
-            if ~isConnected
-                pY = blockPos(2) + (blockPos(4) - blockPos(2)) * (pIdx / (numel(meta.InputNames) + 1));
-                inPortPos = [blockPos(1) - 150, pY - 7, blockPos(1) - 120, pY + 7];
-                inPortPath = [modelName '/' inName];
-                
-                hIn = add_block('simulink/Sources/In1', inPortPath, ...
-                    'Position', inPortPos, 'MakeNameUnique', 'on');
-                blockHandles = [blockHandles; hIn]; %#ok<AGROW>
-                actualInName = get_param(hIn, 'Name');
-                
-                add_line(modelName, [actualInName '/1'], [get_param(block, 'Name') '/' num2str(pIdx)], 'autorouting', 'on');
-            end
-        end
-        
-        for pIdx = 1:numel(meta.OutputNames)
-            outName = meta.OutputNames{pIdx};
-            isConnected = false;
-            for k = 1:numel(connections)
-                if strcmp(connections{k}.SrcBlock, block) && connections{k}.SrcPort == pIdx
-                    isConnected = true;
-                    break;
-                end
-            end
-            
-            if ~isConnected
-                pY = blockPos(2) + (blockPos(4) - blockPos(2)) * (pIdx / (numel(meta.OutputNames) + 1));
-                outPortPos = [blockPos(3) + 120, pY - 7, blockPos(3) + 150, pY + 7];
-                outPortPath = [modelName '/' outName];
-                
-                hOut = add_block('simulink/Sinks/Out1', outPortPath, ...
-                    'Position', outPortPos, 'MakeNameUnique', 'on');
-                blockHandles = [blockHandles; hOut]; %#ok<AGROW>
-                actualOutName = get_param(hOut, 'Name');
-                
-                add_line(modelName, [get_param(block, 'Name') '/' num2str(pIdx)], [actualOutName '/1'], 'autorouting', 'on');
-            end
-        end
-    end
-    
-    if options.WrapInSubsystem && ~isempty(blockHandles)
-        validHandles = blockHandles(ishandle(blockHandles));
-        if ~isempty(validHandles)
-            subsystemHandle = Simulink.BlockDiagram.createSubsystem(validHandles);
-            set_param(subsystemHandle, 'Name', 'MainProcess');
-        end
-    end
-    
-    for i = 1:numel(modelsMeta)
-        if ~modelsMeta(i).WasLoaded && options.CloseReferencedModels
-            close_system(modelsMeta(i).Name, 0);
-        end
-    end
-    
-    save_system(modelName, targetFile);
-    result.OutputFile = targetFile;
-end
-
-function [connections, connStats] = listModelConnections(modelName)
-    connections = struct('Label', {}, 'System', {}, 'SrcBlockPath', {}, 'SrcPortIndex', {}, 'DstBlockPath', {}, 'DstPortIndex', {}, 'AlreadyDelayed', {});
-    connStats = struct();
-    
-    lines = find_system(modelName, 'FindAll', 'on', 'Type', 'line');
-    for i = 1:numel(lines)
-        try
-            srcBlkH = get_param(lines(i), 'SrcBlockHandle');
-            dstBlkH = get_param(lines(i), 'DstBlockHandle');
-            srcPortH = get_param(lines(i), 'SrcPortHandle');
-            dstPortH = get_param(lines(i), 'DstPortHandle');
-            
-            if isempty(srcBlkH) || isempty(dstBlkH) || srcBlkH == -1 || any(dstBlkH == -1), continue; end
-            
-            srcName = get_param(srcBlkH, 'Name');
-            srcType = get_param(srcBlkH, 'BlockType');
-            srcPortNum = get_param(srcPortH, 'PortNumber');
-            
-            for j = 1:numel(dstBlkH)
-                dBlk = dstBlkH(j);
-                dPort = dstPortH(j);
-                dstName = get_param(dBlk, 'Name');
-                dstType = get_param(dBlk, 'BlockType');
-                dstPortNum = get_param(dPort, 'PortNumber');
-                
-                label = sprintf('From %s [Port %d] -> To %s [Port %d]', srcName, srcPortNum, dstName, dstPortNum);
-                isDelayed = strcmp(srcType, 'UnitDelay') || strcmp(dstType, 'UnitDelay');
-                
-                connections(end+1) = struct(...
-                    'Label', label, ...
-                    'System', modelName, ...
-                    'SrcBlockPath', getfullname(srcBlkH), ...
-                    'SrcPortIndex', srcPortNum, ...
-                    'DstBlockPath', getfullname(dBlk), ...
-                    'DstPortIndex', dstPortNum, ...
-                    'AlreadyDelayed', isDelayed); %#ok<AGROW>
-            end
-        catch
-        end
-    end
-end
-
-function result = insertUnitDelayOnBranch(system, srcBlockPath, srcPortIndex, dstBlockPath, dstPortIndex, options)
-    parentSys = fileparts(srcBlockPath);
-    if isempty(parentSys), parentSys = system; end
-    
-    srcPortName = [get_param(srcBlockPath, 'Name') '/' num2str(srcPortIndex)];
-    dstPortName = [get_param(dstBlockPath, 'Name') '/' num2str(dstPortIndex)];
-    
-    try
-        delete_line(parentSys, srcPortName, dstPortName);
-    catch
-    end
-    
-    delayName = [parentSys '/UnitDelay_Manual'];
-    hDelay = add_block('simulink/Discrete/Unit Delay', delayName, 'MakeNameUnique', 'on');
-    actualDelayName = get_param(hDelay, 'Name');
-    
-    srcPos = get_param(srcBlockPath, 'Position');
-    dstPos = get_param(dstBlockPath, 'Position');
-    midX = round((srcPos(3) + dstPos(1)) / 2);
-    midY = round((srcPos(2) + dstPos(4)) / 2);
-    set_param(hDelay, 'Position', [midX-15, midY-15, midX+15, midY+15]);
-    
-    add_line(parentSys, srcPortName, [actualDelayName '/1'], 'autorouting', 'on');
-    add_line(parentSys, [actualDelayName '/1'], dstPortName, 'autorouting', 'on');
-    
-    result = struct('Message', sprintf('Successfully inserted Unit Delay: %s', actualDelayName));
-end
-
-function signalReport = configureSubsystemSignals(options)
-    subsys = gcb;
-    if isempty(subsys)
-        error('No block selected in Simulink. Click a Subsystem block first.');
-    end
-    if ~strcmp(get_param(subsys, 'BlockType'), 'Subsystem')
-        error('Selected block is not a Subsystem.');
-    end
-    
-    if options.ProcessInports
-        inports = find_system(subsys, 'SearchDepth', 1, 'BlockType', 'Inport');
-        for i = 1:numel(inports)
-            try
-                if options.MustResolve
-                    line = get_param(inports(i), 'LineHandles');
-                    if line.Outport ~= -1
-                        set_param(line.Outport, 'MustResolveToSignalObject', 'on');
-                    end
-                end
-            catch
-            end
-        end
-    end
-    
-    if options.ProcessOutports
-        outports = find_system(subsys, 'SearchDepth', 1, 'BlockType', 'Outport');
-        for i = 1:numel(outports)
-            try
-                line = get_param(outports(i), 'LineHandles');
-                if line.Inport ~= -1
-                    if options.ShowPropagation
-                        set_param(line.Inport, 'ShowPropagatedSignals', 'on');
-                    end
-                end
-            catch
-            end
-        end
-    end
-    signalReport = struct('Status', 'Success');
-end
-
-function result = extractAttributesCore(subsystemHandle, searchFolder, outputFile, options)
-    ports = getSubsystemPorts(subsystemHandle);
-    allPorts = {};
-    if strcmp(options.PortChoice, 'Inports') || strcmp(options.PortChoice, 'Both')
-        allPorts = [allPorts, ports.InportNames];
-    end
-    if strcmp(options.PortChoice, 'Outports') || strcmp(options.PortChoice, 'Both')
-        allPorts = [allPorts, ports.OutportNames];
-    end
-    
-    mFiles = dir(fullfile(searchFolder, '**', '*.m'));
-    fidOut = fopen(outputFile, 'w');
-    if fidOut == -1
-        error('Cannot open output file %s', outputFile);
-    end
-    
-    fprintf(fidOut, '%% Extracted Attribute Records\n');
-    fprintf(fidOut, '%% Subsystem: %s\n', ports.Path);
-    fprintf(fidOut, '%% Date: %s\n\n', char(datetime('now')));
-    
-    matchCount = 0;
-    for i = 1:numel(mFiles)
-        filePath = fullfile(mFiles(i).folder, mFiles(i).name);
-        fidIn = fopen(filePath, 'r');
-        if fidIn == -1, continue; end
-        
-        lineNum = 0;
-        while ~feof(fidIn)
-            line = fgetl(fidIn);
-            lineNum = lineNum + 1;
-            if ~ischar(line), continue; end
-            
-            for pIdx = 1:numel(allPorts)
-                portTag = allPorts{pIdx};
-                if options.CaseInsensitive
-                    matched = ~isempty(strfind(lower(line), lower(portTag)));
-                else
-                    matched = ~isempty(strfind(line, portTag));
-                end
-                
-                if matched
-                    fprintf(fidOut, '%% Found in %s (line %d) for tag %s:\n', mFiles(i).name, lineNum, portTag);
-                    fprintf(fidOut, '%s\n\n', line);
-                    matchCount = matchCount + 1;
-                    break;
-                end
-            end
-        end
-        fclose(fidIn);
-    end
-    fclose(fidOut);
-    
-    result = struct('OutputFile', outputFile, 'MatchCount', matchCount);
 end
