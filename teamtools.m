@@ -652,8 +652,6 @@ else
     modelsFolderEdit.Value = '';
 end
 
-end
-
 % =========================================================================
 %  NESTED CALLBACKS - TAB 1
 % =========================================================================
@@ -2334,8 +2332,6 @@ else
 end
 end
 
-end
-
 % =========================================================================
 %  LOCAL FUNCTIONS
 % =========================================================================
@@ -2585,12 +2581,10 @@ function enableMultiSelect(listBox)
 try
     listBox.Multiselect = 'on';
     return;
-catch
 end
 try
     set(listBox, 'Multiselect', 'on');   % case-insensitive route
     return;
-catch
 end
 try
     listBox.MultiSelect = 'on';          % alternate spelling, just in case
@@ -2847,7 +2841,7 @@ lines{end + 1} = ['Output: ' result.OutputFile];
 if ~isempty(result.Warnings)
     lines{end + 1} = 'Warnings:';
     for warningIndex = 1:numel(result.Warnings)
-        lines{end + 1} = ['   - ' result.Warnings{warningIndex}];
+        lines{end + 1} = ['   - ' warningIndex];
     end
 end
 end
@@ -2860,3 +2854,5 @@ left = max(1, round((screenSize(3) - width) / 2));
 bottom = max(1, round((screenSize(4) - height) / 2));
 position = [left bottom width height];
 end
+
+end % <--- Properly terminates the teamtools main scope (all internal functions are now nested)
