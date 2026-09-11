@@ -1,7 +1,11 @@
 function issues = checkSampleTimes(modelsFolder, selectedModels, progressFcn)
-%CHECKSAMPLETIMES Scans child models for compiled sample time mismatches.
-% Uses a dual-engine (deep recursive static trace + compiled diagnostics capture)
-% to catch errors before they cause the parent model build to crash.
+%CHECKSAMPLETIMES Creates a temporary parent model with Model Reference
+% blocks for all selected models, compiles it, and captures Simulink's
+% actual model-referencing diagnostics (InvalidRootOutportConnection,
+% sample time mismatches, etc.).
+%
+% This is the ONLY reliable way to detect these errors because they are
+% Model Referencing diagnostics that only fire in a parent-child context.
 
 if nargin < 3 || isempty(progressFcn)
     progressFcn = @(pct, msg) fprintf('[%.0f%%] %s\n', pct*100, msg);
@@ -18,217 +22,294 @@ if numModels == 0
     return;
 end
 
+% --- Step 1: Load all models ---
+progressFcn(0.05, 'Loading models for validation...');
+openedByUs = {};
 for i = 1:numModels
     modelName = selectedModels{i};
-    progressFcn((i - 1) / numModels, sprintf('Sample time: %s (%d/%d)', ...
-        modelName, i, numModels));
-
-    openedByUs = false;
     try
         if ~bdIsLoaded(modelName)
             modelFile = findModelFileOnDisk(modelsFolder, modelName);
             if isempty(modelFile)
-                issues(end + 1) = struct( ... %#ok<AGROW>
-                    'Category', 'Info', 'Severity', 'warning', ...
-                    'Model', modelName, 'Port', '', ...
-                    'Description', sprintf('Model file not found for "%s".', modelName), ...
-                    'FixMethod', 'none', 'FixData', struct());
                 continue;
             end
             load_system(modelFile);
-            openedByUs = true;
+            openedByUs{end + 1} = modelName; %#ok<AGROW>
         end
+    catch
+    end
+end
 
-        outportPaths = find_system(modelName, 'SearchDepth', 1, ...
-            'FollowLinks', 'on', 'LookUnderMasks', 'all', 'BlockType', 'Outport');
-        if ischar(outportPaths)
-            outportPaths = {outportPaths};
+% --- Step 2: Create a temporary throwaway parent model ---
+progressFcn(0.20, 'Building temporary validation parent...');
+tempParentName = 'teamtools_validation_temp';
+try
+    if bdIsLoaded(tempParentName)
+        close_system(tempParentName, 0);
+    end
+catch
+end
+
+new_system(tempParentName);
+open_system(tempParentName);
+
+% Set solver to fixed-step discrete (matches what Generate does)
+set_param(tempParentName, 'SolverType', 'Fixed-step', 'Solver', 'FixedStepDiscrete');
+
+% Relax diagnostics on the temp parent so compilation continues past
+% the first error and we can collect ALL issues in one pass
+try set_param(tempParentName, 'InvalidRootInportOutportConnection', 'warning'); catch, end
+try set_param(tempParentName, 'ModelReferenceCSMismatchMessage', 'warning'); catch, end
+try set_param(tempParentName, 'MultiTaskDSMLog', 'warning'); catch, end
+try set_param(tempParentName, 'MultiTaskCondExecSys', 'warning'); catch, end
+
+% Add a Model Reference block for each selected model
+modelBlockNames = {};
+yPos = 50;
+for i = 1:numModels
+    modelName = selectedModels{i};
+    if ~bdIsLoaded(modelName)
+        continue;
+    end
+    blockName = sprintf('Ref_%s', matlab.lang.makeValidName(modelName));
+    blockPath = [tempParentName '/' blockName];
+    try
+        add_block('simulink/Ports & Subsystems/Model', blockPath, ...
+            'ModelName', modelName, ...
+            'Position', [100, yPos, 300, yPos + 100]);
+        modelBlockNames{end + 1} = blockName; %#ok<AGROW>
+        yPos = yPos + 150;
+    catch
+        % Skip models that cannot be referenced
+    end
+    progressFcn(0.20 + 0.30 * (i / numModels), ...
+        sprintf('Inserting model reference: %s (%d/%d)', modelName, i, numModels));
+end
+
+% --- Step 3: Compile the temporary parent and capture diagnostics ---
+progressFcn(0.55, 'Compiling parent to detect model-referencing issues...');
+
+% Capture the current warning state
+warnState = warning('query');
+
+% Turn all Simulink warnings into catchable errors so we can read them
+warning('error', 'Simulink:Engine:InvalidRootInportOutportConnection');
+warning('error', 'Simulink:Engine:*');
+warning('error', 'Simulink:blocks:*');
+
+compileErrors = {};
+
+try
+    set_param(tempParentName, 'SimulationCommand', 'update');
+catch compileErr
+    % The compilation threw an error - extract the message
+    compileErrors{end + 1} = compileErr.message; %#ok<AGROW>
+    
+    % Also check the cause chain for additional errors
+    for gIdx = 1:numel(compileErr.cause)
+        causeGroup = compileErr.cause{gIdx};
+        for cIdx = 1:numel(causeGroup)
+            if ~isempty(causeGroup(cIdx).message)
+                compileErrors{end + 1} = causeGroup(cIdx).message; %#ok<AGROW>
+            end
         end
+    end
+end
 
-        % --- Engine 1: Headless Compilation Capture (Highly Accurate) ---
-        hasCompileError = false;
-        try
-            % Headlessly update diagram to force Simulink to resolve inherited sample times
-            set_param(modelName, 'SimulationCommand', 'update');
-        catch compileErr
-            errMessage = compileErr.message;
-            if contains(errMessage, 'Invalid root Outport block connection') || ...
-               contains(errMessage, 'constant sample time')
-                
-                hasCompileError = true;
-                % Attempt to extract the Outport number from the error message
-                portIdxStr = regexp(errMessage, 'Root Outport (\d+)', 'tokens', 'once');
-                targetOutportPath = '';
-                targetOutportName = 'Unknown';
-                
-                if ~isempty(portIdxStr)
-                    portNum = portIdxStr{1};
-                    matchedOutports = find_system(modelName, 'SearchDepth', 1, ...
+% Restore warning state
+warning(warnState);
+
+% --- Step 4: Parse the captured errors into fixable issues ---
+progressFcn(0.70, 'Analyzing diagnostics...');
+
+for errIdx = 1:numel(compileErrors)
+    errMsg = compileErrors{errIdx};
+    
+    % Clean hyperlinks from Simulink messages
+    errMsg = regexprep(errMsg, '<a[^>]*>\s*([^<]*?)\s*</a>', '$1');
+    
+    % --- Pattern 1: Invalid root Outport block connection ---
+    if contains(errMsg, 'Invalid root Outport block connection') || ...
+       (contains(errMsg, 'Root Outport') && contains(errMsg, 'constant sample time'))
+        
+        % Extract model name from the error message
+        modelMatch = regexp(errMsg, '''([^'']+)''', 'tokens');
+        detectedModel = '';
+        if ~isempty(modelMatch)
+            for mIdx = 1:numel(modelMatch)
+                candidate = modelMatch{mIdx}{1};
+                if any(strcmpi(selectedModels, candidate))
+                    detectedModel = candidate;
+                    break;
+                end
+            end
+        end
+        
+        % Extract Outport number
+        portMatch = regexp(errMsg, 'Root Outport (\d+)', 'tokens', 'once');
+        portNum = '';
+        if ~isempty(portMatch)
+            portNum = portMatch{1};
+        end
+        
+        if ~isempty(detectedModel) && bdIsLoaded(detectedModel)
+            % Find the actual Outport block
+            outportPath = '';
+            outportName = '';
+            try
+                if ~isempty(portNum)
+                    matches = find_system(detectedModel, 'SearchDepth', 1, ...
                         'BlockType', 'Outport', 'Port', portNum);
-                    if ~isempty(matchedOutports)
-                        targetOutportPath = matchedOutports{1};
-                        targetOutportName = get_param(targetOutportPath, 'Name');
+                    if ~isempty(matches)
+                        outportPath = matches{1};
+                        outportName = get_param(outportPath, 'Name');
                     end
                 end
-                
-                if isempty(targetOutportPath) && ~isempty(outportPaths)
-                    targetOutportPath = outportPaths{1};
-                    targetOutportName = get_param(targetOutportPath, 'Name');
+                if isempty(outportPath)
+                    allOutports = find_system(detectedModel, 'SearchDepth', 1, ...
+                        'BlockType', 'Outport');
+                    if ~isempty(allOutports)
+                        outportPath = allOutports{1};
+                        outportName = get_param(outportPath, 'Name');
+                    end
+                end
+            catch
+            end
+            
+            if ~isempty(outportPath)
+                issues(end + 1) = struct( ... %#ok<AGROW>
+                    'Category', 'SampleTime', ...
+                    'Severity', 'error', ...
+                    'Model', detectedModel, ...
+                    'Port', outportName, ...
+                    'Description', sprintf(['Simulink diagnostic: Root Outport "%s" ' ...
+                        'in model "%s" does not have a constant sample time but is ' ...
+                        'driven by a constant signal. Fix: set SampleTime to Inf.'], ...
+                        outportName, detectedModel), ...
+                    'FixMethod', 'SetOutportConstant', ...
+                    'FixData', struct( ...
+                        'ModelName', detectedModel, ...
+                        'OutportPath', outportPath));
+            end
+        end
+    end
+    
+    % --- Pattern 2: Sample time mismatch ---
+    if contains(errMsg, 'sample time') && contains(errMsg, 'mismatch')
+        modelMatch = regexp(errMsg, '''([^'']+)''', 'tokens');
+        detectedModel = '';
+        if ~isempty(modelMatch)
+            for mIdx = 1:numel(modelMatch)
+                candidate = modelMatch{mIdx}{1};
+                if any(strcmpi(selectedModels, candidate))
+                    detectedModel = candidate;
+                    break;
+                end
+            end
+        end
+        if ~isempty(detectedModel)
+            issues(end + 1) = struct( ... %#ok<AGROW>
+                'Category', 'SampleTime', ...
+                'Severity', 'warning', ...
+                'Model', detectedModel, ...
+                'Port', '', ...
+                'Description', sprintf('Sample time mismatch in "%s": %s', ...
+                    detectedModel, errMsg), ...
+                'FixMethod', 'none', ...
+                'FixData', struct());
+        end
+    end
+end
+
+% --- Step 5: Also check compiled sample times directly ---
+progressFcn(0.80, 'Checking compiled sample times on root Outports...');
+
+for i = 1:numModels
+    modelName = selectedModels{i};
+    if ~bdIsLoaded(modelName)
+        continue;
+    end
+    
+    % Skip if we already found issues for this model
+    alreadyFlagged = any(strcmp({issues.Model}, modelName) & ...
+        strcmp({issues.Category}, 'SampleTime'));
+    if alreadyFlagged
+        continue;
+    end
+    
+    try
+        % Compile the model standalone to resolve inherited sample times
+        eval([modelName '([],[],[],''compile'');']);
+        
+        outports = find_system(modelName, 'SearchDepth', 1, ...
+            'BlockType', 'Outport');
+        
+        for j = 1:numel(outports)
+            op = outports{j};
+            opName = get_param(op, 'Name');
+            opST = strtrim(get_param(op, 'SampleTime'));
+            
+            % Skip if already explicitly constant
+            if strcmpi(opST, 'inf')
+                continue;
+            end
+            
+            try
+                pH = get_param(op, 'PortHandles');
+                inHandle = pH.Inport;
+                if isempty(inHandle) || inHandle == -1
+                    continue;
                 end
                 
-                if ~isempty(targetOutportPath)
+                compiledST = get_param(inHandle, 'CompiledSampleTime');
+                
+                % Check if the compiled sample time is constant [Inf, 0]
+                if isnumeric(compiledST) && numel(compiledST) >= 1 && ...
+                        isinf(compiledST(1)) && compiledST(1) > 0
+                    
                     issues(end + 1) = struct( ... %#ok<AGROW>
                         'Category', 'SampleTime', ...
                         'Severity', 'error', ...
                         'Model', modelName, ...
-                        'Port', targetOutportName, ...
-                        'Description', sprintf(['Simulink compiler error: Root Outport "%s" ' ...
-                            'is driven by a constant signal but lacks an explicit constant rate. ' ...
-                            'Original diagnostic: %s'], targetOutportName, cleanHyperlinks(errMessage)), ...
+                        'Port', opName, ...
+                        'Description', sprintf(['Root Outport "%s" in model "%s" ' ...
+                            'has SampleTime="%s" but compiled signal rate is ' ...
+                            'Constant (Inf). This will cause a build failure ' ...
+                            'when referenced from a parent model.'], ...
+                            opName, modelName, opST), ...
                         'FixMethod', 'SetOutportConstant', ...
                         'FixData', struct( ...
                             'ModelName', modelName, ...
-                            'OutportPath', targetOutportPath));
+                            'OutportPath', op));
                 end
+            catch
             end
         end
-
-        % --- Engine 2: Deep Recursive Static Signal Trace ---
-        if ~hasCompileError
-            for j = 1:numel(outportPaths)
-                outportPath = outportPaths{j};
-                outportName = get_param(outportPath, 'Name');
-                try
-                    outportST = strtrim(get_param(outportPath, 'SampleTime'));
-                    if strcmpi(outportST, 'inf')
-                        continue;
-                    end
-
-                    visited = {};
-                    if traceSignalSourceIsConstant(modelName, outportPath, visited, 15)
-                        issues(end + 1) = struct( ... %#ok<AGROW>
-                            'Category', 'SampleTime', ...
-                            'Severity', 'error', ...
-                            'Model', modelName, ...
-                            'Port', outportName, ...
-                            'Description', sprintf(['Root Outport "%s" in model "%s" has ' ...
-                                'SampleTime = "%s", but its signal trace is Constant. ' ...
-                                'This triggers an "Invalid root Outport block connection" compile failure.'], ...
-                                outportName, modelName, outportST), ...
-                            'FixMethod', 'SetOutportConstant', ...
-                            'FixData', struct( ...
-                                'ModelName', modelName, ...
-                                'OutportPath', outportPath));
-                        break; % Avoid duplicate issues for the same target
-                    end
-                catch
-                end
-            end
-        end
-
-        if openedByUs
-            close_system(modelName, 0);
-        end
-    catch modelErr
-        if openedByUs
-            try close_system(modelName, 0); catch, end
-        end
-        issues(end + 1) = struct( ... %#ok<AGROW>
-            'Category', 'Info', 'Severity', 'warning', ...
-            'Model', modelName, 'Port', '', ...
-            'Description', sprintf('Could not analyze model "%s": %s', ...
-                modelName, modelErr.message), ...
-            'FixMethod', 'none', 'FixData', struct());
+        
+        eval([modelName '([],[],[],''term'');']);
+    catch
+        try eval([modelName '([],[],[],''term'');']); catch, end
     end
 end
 
-progressFcn(1, 'Sample time check complete.');
-end
-
-function isConst = traceSignalSourceIsConstant(modelName, blockPath, visited, depthLeft)
-isConst = false;
-if depthLeft <= 0 || ismember(blockPath, visited), return; end
-visited{end + 1} = blockPath;
-try bType = get_param(blockPath, 'BlockType'); catch, return; end
-
-if strcmp(bType, 'Constant') || strcmp(bType, 'Ground') || strcmp(bType, 'EnumeratedConstant')
-    isConst = true; return;
-end
+% --- Step 6: Clean up the temporary parent model ---
+progressFcn(0.95, 'Cleaning up...');
 try
-    stVal = strtrim(get_param(blockPath, 'SampleTime'));
-    if strcmpi(stVal, 'inf')
-        isConst = true; return;
-    elseif ~isempty(stVal) && ~strcmp(stVal, '-1') && ~strcmp(stVal, '[ -1, -1 ]')
-        isConst = false; return;
-    end
+    close_system(tempParentName, 0);
 catch
 end
-if strcmp(bType, 'Inport') && strcmp(get_param(blockPath, 'Parent'), modelName)
-    isConst = false; return;
-end
-if strcmp(bType, 'From')
-    try
-        tag = get_param(blockPath, 'GotoTag');
-        gotoList = find_system(modelName, 'FollowLinks', 'on', 'LookUnderMasks', 'all', ...
-            'BlockType', 'Goto', 'GotoTag', tag);
-        if ~isempty(gotoList)
-            isConst = traceSignalSourceIsConstant(modelName, gotoList{1}, visited, depthLeft - 1);
-        end
-    catch
-    end
-    return;
-end
-if strcmp(bType, 'Goto')
-    pH = get_param(blockPath, 'PortHandles');
-    if ~isempty(pH.Inport)
-        line = get_param(pH.Inport(1), 'LineHandle');
-        if line ~= -1
-            srcPort = get_param(line, 'SrcPortHandle');
-            if srcPort ~= -1
-                isConst = traceSignalSourceIsConstant(modelName, get_param(srcPort, 'Parent'), visited, depthLeft - 1);
-            end
-        end
-    end
-    return;
-end
-if strcmp(bType, 'SubSystem')
-    try
-        subOutports = find_system(blockPath, 'SearchDepth', 1, 'BlockType', 'Outport');
-        if ~isempty(subOutports)
-            isConst = true;
-            for s = 1:numel(subOutports)
-                if ~traceSignalSourceIsConstant(modelName, subOutports{s}, visited, depthLeft - 1)
-                    isConst = false; return;
-                end
-            end
-        end
-    catch
-    end
-    return;
-end
-try
-    pH = get_param(blockPath, 'PortHandles');
-    inports = pH.Inport;
-    if isempty(inports), return; end
-    isConst = true;
-    for k = 1:numel(inports)
-        line = get_param(inports(k), 'LineHandle');
-        if line == -1, isConst = false; return; end
-        srcPort = get_param(line, 'SrcPortHandle');
-        if srcPort == -1, isConst = false; return; end
-        if ~traceSignalSourceIsConstant(modelName, get_param(srcPort, 'Parent'), visited, depthLeft - 1)
-            isConst = false; return;
-        end
-    end
-catch
-    isConst = false;
-end
+
+% Close models we opened
+for i = 1:numel(openedByUs)
+    try close_system(openedByUs{i}, 0); catch, end
 end
 
-function text = cleanHyperlinks(text)
-text = regexprep(text, '<a[^>]*>\s*([^<]*?)\s*</a>', '$1');
+progressFcn(1, sprintf('Validation complete: %d issue(s) found.', numel(issues)));
 end
 
+% =========================================================================
+%  HELPER
+% =========================================================================
 function modelFile = findModelFileOnDisk(modelsFolder, modelName)
 modelFile = '';
 candidates = dir(fullfile(modelsFolder, '**', [modelName '.slx']));
