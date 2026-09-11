@@ -385,8 +385,18 @@ try
     end
     set_param(targetModel, 'SolverType', 'Fixed-step', 'Solver', 'FixedStepDiscrete');
 
+    % Set diagnostic parameters on the parent model so that model reference sample
+    % time mismatches trigger warnings instead of crashing MATLAB / aborting build.
+    try
+        set_param(targetModel, 'InvalidRootInportOutportConnection', 'warning');
+    catch
+    end
+    try
+        set_param(targetModel, 'ModelReferenceCSMismatchMessage', 'warning');
+    catch
+    end
+
     % ------------------------------------------------ Setup Build Target
-    % If WrapInSubsystem is enabled, the container for all inner blocks is the Subsystem
     wrapInSub = options.WrapInSubsystem;
     subsystemName = '';
     if wrapInSub
@@ -565,7 +575,13 @@ try
             rightMostEdge = max(rightMostEdge, blockX + modelWidth + gotoGap + commonFromGotoWidth);
         end
 
-        set_param(targetModel, 'SimulationCommand', 'update');
+        % PROTECTED UPDATE: Catch and warn if child model triggers a compilation warning
+        try
+            set_param(targetModel, 'SimulationCommand', 'update');
+        catch updateErr
+            result.Warnings{end + 1} = sprintf('Child model interface update warning: %s', ...
+                errorChainText(updateErr));
+        end
 
         progressFcn(0.75, 'Reading the model ports...');
         for modelIndex = 1:numModels
@@ -748,7 +764,14 @@ try
         end
 
         outportX = currentModelX - 100 + 300;
-        set_param(targetModel, 'SimulationCommand', 'update');
+        
+        % PROTECTED UPDATE: Catch child model interface update warnings
+        try
+            set_param(targetModel, 'SimulationCommand', 'update');
+        catch updateErr
+            result.Warnings{end + 1} = sprintf('Child model interface update warning: %s', ...
+                errorChainText(updateErr));
+        end
 
         for modelIndex = 1:numModels
             pH = get_param([containerSystem '/' modelBlockNames{modelIndex}], 'PortHandles');
@@ -826,7 +849,12 @@ try
     % ------------------------------------------------ Outer Subsystem Setup
     if wrapInSub
         progressFcn(0.95, 'Aligning Root Inports and Outports to Subsystem...');
-        set_param(targetModel, 'SimulationCommand', 'update');
+        
+        % PROTECTED UPDATE: Subsystem position calculation
+        try
+            set_param(targetModel, 'SimulationCommand', 'update');
+        catch
+        end
         
         subBlockPath = [targetModel '/' subsystemName];
         ph = get_param(subBlockPath, 'PortHandles');
@@ -843,7 +871,11 @@ try
             set_param(subBlockPath, 'BackgroundColor', '[0.85,0.92,1.00]');
         end
         
-        set_param(targetModel, 'SimulationCommand', 'update');
+        % PROTECTED UPDATE: Port position calculation
+        try
+            set_param(targetModel, 'SimulationCommand', 'update');
+        catch
+        end
         ph = get_param(subBlockPath, 'PortHandles');
         
         % Align Root Inports straight with Subsystem input pins
@@ -882,7 +914,12 @@ try
     end
 
     progressFcn(0.98, 'Updating diagram...');
-    try set_param(targetModel, 'SimulationCommand', 'update'); catch, end
+    try 
+        set_param(targetModel, 'SimulationCommand', 'update'); 
+    catch updateErr
+        result.Warnings{end + 1} = sprintf('Final diagram update warning: %s', ...
+            errorChainText(updateErr));
+    end
 
     if cancelFcn()
         close_system(targetModel, 0); parentCreated = false; result.Cancelled = true;

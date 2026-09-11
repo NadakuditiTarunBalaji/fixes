@@ -1,10 +1,6 @@
 function issues = checkSLDDConflicts(modelsFolder, progressFcn)
-%CHECKSLDDCONFLICTS Scan every .sldd file under modelsFolder for
-% Simulink.Signal/Simulink.Parameter symbols whose Min/Max differ
-% between dictionaries.
-%
-%   issues = checkSLDDConflicts(modelsFolder)
-%   issues = checkSLDDConflicts(modelsFolder, progressFcn)
+%CHECKSLDDCONFLICTS Inspects the active DataDictionary parameter on all models,
+% loads them, and identifies variable definition range (Min/Max) collisions.
 
 if nargin < 2 || isempty(progressFcn)
     progressFcn = @(pct, msg) fprintf('[%.0f%%] %s\n', pct*100, msg);
@@ -13,16 +9,57 @@ end
 issues = struct('Category', {}, 'Severity', {}, 'Model', {}, ...
     'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {});
 
-progressFcn(0, 'Scanning for .sldd files...');
-slddFiles = dir(fullfile(modelsFolder, '**', '*.sldd'));
-slddFiles = slddFiles(~[slddFiles.isdir]);
+progressFcn(0, 'Resolving attached active data dictionaries...');
 
-if isempty(slddFiles)
+% Find all models to retrieve their dict attachments
+slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
+mdlFiles = dir(fullfile(modelsFolder, '**', '*.mdl'));
+allModels = [slxFiles; mdlFiles];
+
+uniqueDictPaths = {};
+uniqueDictNames = {};
+
+for i = 1:numel(allModels)
+    [~, mName] = fileparts(allModels(i).name);
+    try
+        openedByUs = false;
+        if ~bdIsLoaded(mName)
+            load_system(fullfile(allModels(i).folder, allModels(i).name));
+            openedByUs = true;
+        end
+        
+        attachedDict = get_param(mName, 'DataDictionary');
+        if ~isempty(attachedDict)
+            resolvedPath = which(attachedDict);
+            if ~isempty(resolvedPath) && ~any(strcmp(uniqueDictPaths, resolvedPath))
+                uniqueDictPaths{end+1} = resolvedPath; %#ok<AGROW>
+                [~, namePart, extPart] = fileparts(resolvedPath);
+                uniqueDictNames{end+1} = [namePart extPart]; %#ok<AGROW>
+            end
+        end
+        
+        if openedByUs
+            close_system(mName, 0);
+        end
+    catch
+    end
+end
+
+% Also scan folder to catch unattached dictionaries
+localSldds = dir(fullfile(modelsFolder, '**', '*.sldd'));
+for k = 1:numel(localSldds)
+    resolvedPath = fullfile(localSldds(k).folder, localSldds(k).name);
+    if ~any(strcmp(uniqueDictPaths, resolvedPath))
+        uniqueDictPaths{end+1} = resolvedPath; %#ok<AGROW>
+        uniqueDictNames{end+1} = localSldds(k).name; %#ok<AGROW>
+    end
+end
+
+if isempty(uniqueDictPaths)
     issues(end + 1) = struct( ...
         'Category', 'Info', 'Severity', 'info', ...
         'Model', 'N/A', 'Port', '', ...
-        'Description', ['No .sldd files found under the models folder. ' ...
-            'SLDD conflict check skipped.'], ...
+        'Description', 'No active or local .sldd dictionaries found. Check skipped.', ...
         'FixMethod', 'none', 'FixData', struct());
     progressFcn(1, 'No .sldd files found.');
     return;
@@ -30,10 +67,10 @@ end
 
 allDefs = containers.Map('KeyType', 'char', 'ValueType', 'any');
 
-for i = 1:numel(slddFiles)
-    dictPath = fullfile(slddFiles(i).folder, slddFiles(i).name);
-    dictName = slddFiles(i).name;
-    progressFcn((i - 1) / numel(slddFiles), sprintf('Scanning dictionary: %s', dictName));
+for i = 1:numel(uniqueDictPaths)
+    dictPath = uniqueDictPaths{i};
+    dictName = uniqueDictNames{i};
+    progressFcn((i - 1) / numel(uniqueDictPaths), sprintf('Scanning dictionary: %s', dictName));
 
     dictObj = [];
     try
@@ -58,7 +95,6 @@ for i = 1:numel(slddFiles)
                     end
                 end
             catch
-                % Skip entries that cannot be read.
             end
         end
         close(dictObj);
@@ -69,8 +105,7 @@ for i = 1:numel(slddFiles)
         issues(end + 1) = struct( ... %#ok<AGROW>
             'Category', 'SLDD', 'Severity', 'warning', ...
             'Model', dictName, 'Port', '', ...
-            'Description', sprintf('Could not scan dictionary "%s": %s', ...
-                dictName, dictErr.message), ...
+            'Description', sprintf('Could not read dict "%s": %s', dictName, dictErr.message), ...
             'FixMethod', 'none', 'FixData', struct());
     end
 end
@@ -86,7 +121,7 @@ for i = 1:numel(symNames)
     minStrings = arrayfun(@(d) mat2str(d.Min), defs, 'UniformOutput', false);
     maxStrings = arrayfun(@(d) mat2str(d.Max), defs, 'UniformOutput', false);
     if numel(unique(minStrings)) <= 1 && numel(unique(maxStrings)) <= 1
-        continue;   % every definition agrees
+        continue;   
     end
 
     masterIdx = pickMasterDefinition(minStrings, maxStrings);
@@ -97,10 +132,9 @@ for i = 1:numel(symNames)
         'Severity', 'error', ...
         'Model', symName, ...
         'Port', '', ...
-        'Description', sprintf(['Symbol "%s" has %d inconsistent ' ...
-            'definition(s) across: %s. Master: %s (Min=%s, Max=%s)'], ...
-            symName, numel(defs), strjoin(dictNames, ', '), ...
-            defs(masterIdx).DictName, ...
+        'Description', sprintf(['Symbol "%s" has inconsistent range values ' ...
+            'between active dictionaries: %s. Master source chosen: %s (Min=%s, Max=%s)'], ...
+            symName, strjoin(dictNames, ', '), defs(masterIdx).DictName, ...
             mat2str(defs(masterIdx).Min), mat2str(defs(masterIdx).Max)), ...
         'FixMethod', 'SyncToMaster', ...
         'FixData', struct( ...
@@ -109,8 +143,7 @@ for i = 1:numel(symNames)
             'MasterIndex', masterIdx));
 end
 
-progressFcn(1, sprintf('SLDD scan complete: %d dictionary(ies) checked.', ...
-    numel(slddFiles)));
+progressFcn(1, sprintf('SLDD analysis completed: %d active files checked.', numel(uniqueDictPaths)));
 end
 
 function [hasMinMax, symMin, symMax] = extractMinMax(symValue)
@@ -133,10 +166,6 @@ end
 end
 
 function masterIdx = pickMasterDefinition(minStrings, maxStrings)
-%PICKMASTERDEFINITION Choose the most common (Min,Max) pair as master
-% (majority vote) instead of just the first non-empty one; ties favor
-% the earliest definition.
-
 combined = strcat(minStrings, '|', maxStrings);
 uniqueCombos = unique(combined);
 bestCount = -1;
@@ -152,15 +181,7 @@ masterIdx = find(strcmp(combined, bestCombo), 1, 'first');
 end
 
 function entries = asEntryArray(entries)
-%ASENTRYARRAY Normalize find() results to something indexable with ().
-% find() on a dictionary Section returns an object array, but this
-% guards against a cell-array return too.
-
 if iscell(entries)
-    if isempty(entries)
-        entries = [];
-    else
-        entries = [entries{:}];
-    end
+    if isempty(entries), entries = []; else, entries = [entries{:}]; end
 end
 end
