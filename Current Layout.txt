@@ -1,0 +1,78 @@
+Current Layout
+┌─────────────────────────────────────────────────────────────────┐
+│  Model Reference Builder                                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Models Folder: [C:\Projects\Models        ] [Browse...]        │
+│                                                                 │
+│  ┌─────────────────────────────┐  Options:                      │
+│  │ Available Models            │  ☑ Wrap in Subsystem           │
+│  │  ☑ ModelA                   │  ☑ Tidy Layout                │
+│  │  ☑ ModelB                   │  ☐ Color Blocks               │
+│  │  ☑ ModelC                   │  Connection: [Lines ▼]        │
+│  │  ☐ ModelD                   │  Layout:     [Vertical ▼]     │
+│  │  ...                        │  Block Spacing: [100]         │
+│  │                             │                               │
+│  └─────────────────────────────┘                               │
+│                                                                 │
+│  Target Model Name: [GeneratedParent    ]                       │
+│  Output Folder:     [C:\Projects\Output ] [Browse...]           │
+│                                                                 │
+│              [ Build Parent Model ]                             │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ Log:                                                    │    │
+│  │ > Building parent model...                              │    │
+│  │ > ERROR: Invalid root Outport...                        │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+
+
+Proposed Layout (With Validation & Diagnostics)
+┌─────────────────────────────────────────────────────────────────┐
+│  Model Reference Builder                                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Models Folder: [C:\Projects\Models        ] [Browse...]        │
+│                                                                 │
+│  ┌─────────────────────────────┐  Options:                      │
+│  │ Available Models            │  ☑ Wrap in Subsystem           │
+│  │  ☑ ModelA                   │  ☑ Tidy Layout                │
+│  │  ☑ ModelB                   │  ☐ Color Blocks               │
+│  │  ☑ ModelC                   │  Connection: [Lines ▼]        │
+│  │  ☐ ModelD                   │  Layout:     [Vertical ▼]     │
+│  │  ...                        │  Block Spacing: [100]         │
+│  │                             │                               │
+│  └─────────────────────────────┘                               │
+│                                                                 │
+│  Target Model Name: [GeneratedParent    ]                       │
+│  Output Folder:     [C:\Projects\Output ] [Browse...]           │
+│                                                                 │
+│  ┌──────────────────┐  ┌──────────────────┐                     │
+│  │ 🔍 Validate First │  │ ✅ Build Model    │                    │
+│  └──────────────────┘  └──────────────────┘                     │
+│                                                                 │
+│  ┌─ Tabs ──────────────────────────────────────────────────┐    │
+│  │ [Log] [Diagnostics] [SLDD Manager]                      │    │
+│  ├─────────────────────────────────────────────────────────┤    │
+│  │ DIAGNOSTICS TAB                                         │    │
+│  │                                                         │    │
+│  │ Status: ❌ 3 issues found (2 errors, 1 warning)         │    │
+│  │                                                         │    │
+│  │ ┌───┬──────┬───────┬──────────────┬──────────────────┐  │    │
+│  │ │ # │ Type │ Model │ Issue        │ Action           │  │    │
+│  │ ├───┼──────┼───────┼──────────────┼──────────────────┤  │    │
+│  │ │ 1 │ 🔴   │ abc   │ Outport 1    │ [Fix ▼] [Apply]  │  │    │
+│  │ │   │ Time │       │ Constant→    │                  │  │    │
+│  │ │   │      │       │ Discrete     │                  │  │    │
+│  │ ├───┼──────┼───────┼──────────────┼──────────────────┤  │    │
+│  │ │ 2 │ 🔴   │ m_01  │ 3 SLDD defs  │ [Sync] [Apply]   │  │    │
+│  │ │   │ SLDD │       │ Min/Max diff │                  │  │    │
+│  │ ├───┼──────┼───────┼──────────────┼──────────────────┤  │    │
+│  │ │ 3 │ 🟡   │ X,Y,Z │ Solver type  │ [Match] [Apply]  │  │    │
+│  │ │   │ Conf │       │ mismatch     │                  │  │    │
+│  │ └───┴──────┴───────┴──────────────┴──────────────────┘  │    │
+│  │                                                         │    │
+│  │                              [Fix All Issues]           │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
