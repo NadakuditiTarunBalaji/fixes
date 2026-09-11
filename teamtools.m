@@ -17,8 +17,9 @@ function teamtools
 %      using a selected subsystem's port names as search tags.
 %
 % All heavy lifting is done by shared engines (buildParentModelCore.m,
-% extractAttributesCore.m, validateModelsCore.m), which are also used
-% by the command-line tools - a fix in one place fixes every front-end.
+% extractAttributesCore.m, validateModels.m, applyFixes.m, and their
+% checkXxx.m/fixXxx.m helpers), which are also used by the command-line
+% tools - a fix in one place fixes every front-end.
 %
 % Requirements: MATLAB R2020a or newer with Simulink.
 
@@ -71,7 +72,8 @@ state = struct( ...
     'LastGeneratedModel', '', ...
     'ExtractOutput',     '', ...
     'ValidationIssues',  struct('Category', {}, 'Severity', {}, 'Model', {}, ...
-        'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {}));
+        'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {}), ...
+    'ValidationFolder',  '');
 
 % ---- window ---------------------------------------------------------------
 app = uifigure('Name', 'Simulink Team Tools', ...
@@ -999,6 +1001,7 @@ chkCfgResolver.Value = true;
 % --- Tab 1: validation / diagnostics / SLDD manager
 state.ValidationIssues = struct('Category', {}, 'Severity', {}, ...
     'Model', {}, 'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {});
+state.ValidationFolder = '';
 diagTable.Data = {};
 diagStatusLabel.Text = 'Click "Validate First" to scan the selected models.';
 diagStatusLabel.FontColor = [0.5 0.5 0.5];
@@ -1411,6 +1414,8 @@ end
 % -------------------------------------------------------------------
 function doValidate(~, ~)
 %DOVALIDATE Scan the selected models for build-blocking issues.
+% Delegates to validateModels.m (which in turn calls checkSampleTimes.m,
+% checkConfigConsistency.m, and checkSLDDConflicts.m).
 
 [folder, models] = validateTab1();
 if isempty(folder) || isempty(models)
@@ -1426,7 +1431,7 @@ logTo(log1, sprintf('Validate First: scanning %d model(s).', numel(models)));
 
 p = makeProgress(app, 'Validating models');
 try
-    issues = validateModelsCore(folder, models, ...
+    issues = validateModels(folder, models, ...
         @(fraction, message) p.set(fraction, message));
     p.close();
 catch validateError
@@ -1441,6 +1446,7 @@ catch validateError
 end
 
 state.ValidationIssues = issues;
+state.ValidationFolder = folder;
 populateDiagnosticsTable();
 populateSLDDTable();
 validateBtn.Enable = 'on';
@@ -1521,6 +1527,9 @@ end
 
 function populateSLDDTable()
 %POPULATESLDDTABLE Fill the SLDD Manager tab table from state.
+% NOTE: checkSLDDConflicts.m puts the SYMBOL NAME in issue.Model (and
+% leaves issue.Port empty) for SLDD-category issues, so the Symbol
+% column below is read from issue.Model, not issue.Port.
 
 issues = state.ValidationIssues;
 if isempty(issues)
@@ -1539,32 +1548,39 @@ if isempty(slddIssues)
     return;
 end
 
-slddStatusLabel.Text = sprintf('%d SLDD conflict(s) found.', numel(slddIssues));
-slddStatusLabel.FontColor = [0.75 0 0];
-
 rows = {};
 for slddIndex = 1:numel(slddIssues)
     issue = slddIssues(slddIndex);
     if ~isfield(issue.FixData, 'Definitions')
-        continue;
+        continue;   % e.g. an informational "dictionary could not be read" issue
     end
     defs = issue.FixData.Definitions;
     masterIndex = 1;
     if isfield(issue.FixData, 'MasterIndex')
         masterIndex = issue.FixData.MasterIndex;
     end
+    symbolName = issue.Model;
     for defIndex = 1:numel(defs)
         if defIndex == masterIndex
             status = 'MASTER (authoritative)';
         else
             status = 'STALE (needs sync)';
         end
-        rows(end + 1, :) = {issue.Port, defs(defIndex).DictName, ...
+        rows(end + 1, :) = {symbolName, defs(defIndex).DictName, ...
             mat2str(defs(defIndex).Min), mat2str(defs(defIndex).Max), ...
             status}; %#ok<AGROW>
     end
 end
-slddTable.Data = rows;
+
+if isempty(rows)
+    slddTable.Data = {};
+    slddStatusLabel.Text = 'No SLDD conflicts found.';
+    slddStatusLabel.FontColor = [0 0.55 0];
+else
+    slddStatusLabel.Text = sprintf('%d SLDD conflict(s) found.', numel(slddIssues));
+    slddStatusLabel.FontColor = [0.75 0 0];
+    slddTable.Data = rows;
+end
 end
 
 function onFixMethodChanged(~, event)
@@ -1587,6 +1603,8 @@ end
 
 function doFixAll(~, ~)
 %DOFIXALL Apply the chosen fix for every fixable issue, then re-validate.
+% Delegates to applyFixes.m (which in turn calls fixSampleTime.m and
+% fixSLDDConflict.m for the corresponding fix methods).
 
 issues = state.ValidationIssues;
 if isempty(issues)
@@ -1597,6 +1615,16 @@ fixableMask = ~strcmp({issues.FixMethod}, 'none');
 fixable = issues(fixableMask);
 if isempty(fixable)
     setStatus('No fix method selected for any issue.');
+    return;
+end
+
+folder = state.ValidationFolder;
+if isempty(folder)
+    folder = char(strtrim(modelsFolderEdit.Value));
+end
+if ~isfolder(folder)
+    notify(app, 'Choose a valid models folder first (Browse...).', ...
+        'Missing folder', 'warning');
     return;
 end
 
@@ -1614,7 +1642,7 @@ setStatus('Applying fixes...');
 
 p = makeProgress(app, 'Applying fixes');
 try
-    results = applyValidationFixes(fixable, ...
+    results = applyFixes(issues, folder, ...
         @(fraction, message) p.set(fraction, message));
     p.close();
 catch fixError
@@ -2831,363 +2859,4 @@ screenSize = get(groot, 'ScreenSize');
 left = max(1, round((screenSize(3) - width) / 2));
 bottom = max(1, round((screenSize(4) - height) / 2));
 position = [left bottom width height];
-end
-
-% =========================================================================
-%  VALIDATION ENGINE (also usable standalone / from the command line)
-% =========================================================================
-function issues = validateModelsCore(modelsFolder, modelNames, progressFcn)
-%VALIDATEMODELSCORE Pre-build checks: configuration parameter mismatches,
-% Outport sample times, and conflicting Simulink.Signal/Parameter
-% definitions across linked data dictionaries.
-%
-%   issues = validateModelsCore(modelsFolder, modelNames, progressFcn)
-%
-% issues is a struct array with fields:
-%   Category    'Config' | 'SampleTime' | 'SLDD'
-%   Severity    'error' | 'warning' | 'info'
-%   Model       model name(s) the issue applies to
-%   Port        port/symbol name (may be empty)
-%   Description human-readable description
-%   FixMethod   'InsertUnitDelay' | 'SetOutportConstant' | 'SyncToMaster' |
-%               'MatchParent' | 'none'
-%   FixData     struct with whatever applyValidationFixes needs
-
-if nargin < 3 || isempty(progressFcn)
-    progressFcn = @(fraction, message) [];
-end
-
-issues = struct('Category', {}, 'Severity', {}, 'Model', {}, 'Port', {}, ...
-    'Description', {}, 'FixMethod', {}, 'FixData', {});
-
-total = numel(modelNames);
-if total == 0
-    return;
-end
-
-loadedHere = {};
-solverEntries = struct('Model', {}, 'Value', {});
-sigDefs = containers.Map();   % symbol name -> struct array of definitions
-
-cleanupObj = onCleanup(@() closeLoadedModels(loadedHere)); %#ok<NASGU>
-
-for modelIndex = 1:total
-    modelName = modelNames{modelIndex};
-    progressFcn((modelIndex - 1) / total, sprintf('Checking %s...', modelName));
-
-    modelFile = fullfile(modelsFolder, [modelName '.slx']);
-    if ~isfile(modelFile)
-        modelFile = fullfile(modelsFolder, [modelName '.mdl']);
-    end
-    if ~isfile(modelFile)
-        issues(end + 1) = struct('Category', 'Config', 'Severity', 'error', ... %#ok<AGROW>
-            'Model', modelName, 'Port', '', ...
-            'Description', 'Model file could not be found.', ...
-            'FixMethod', 'none', 'FixData', struct());
-        continue;
-    end
-
-    wasLoaded = bdIsLoaded(modelName);
-    try
-        if ~wasLoaded
-            load_system(modelFile);
-            loadedHere{end + 1} = modelName; %#ok<AGROW>
-        end
-    catch loadErr
-        issues(end + 1) = struct('Category', 'Config', 'Severity', 'error', ... %#ok<AGROW>
-            'Model', modelName, 'Port', '', ...
-            'Description', ['Could not load the model: ' loadErr.message], ...
-            'FixMethod', 'none', 'FixData', struct());
-        continue;
-    end
-
-    % --- configuration parameter consistency (SolverType) --------------
-    try
-        solverType = get_param(modelName, 'SolverType');
-    catch
-        solverType = '';
-    end
-    if ~isempty(solverType)
-        solverEntries(end + 1) = struct('Model', modelName, 'Value', solverType); %#ok<AGROW>
-    end
-
-    % --- Outport sample time sanity check --------------------------------
-    try
-        outportHandles = find_system(modelName, 'SearchDepth', 1, ...
-            'BlockType', 'Outport');
-    catch
-        outportHandles = [];
-    end
-    for outIndex = 1:numel(outportHandles)
-        try
-            st = strtrim(get_param(outportHandles(outIndex), 'SampleTime'));
-        catch
-            st = '';
-        end
-        if strcmp(st, '0')
-            issues(end + 1) = struct('Category', 'SampleTime', ... %#ok<AGROW>
-                'Severity', 'error', 'Model', modelName, ...
-                'Port', get_param(outportHandles(outIndex), 'Name'), ...
-                'Description', ['Outport has a continuous (0) sample ', ...
-                    'time - referenced models need an explicit ', ...
-                    'discrete or inherited sample time.'], ...
-                'FixMethod', 'SetOutportConstant', ...
-                'FixData', struct('Block', ...
-                    getfullname(outportHandles(outIndex))));
-        end
-    end
-
-    % --- linked data dictionary conflicts --------------------------------
-    try
-        dictName = get_param(modelName, 'DataDictionary');
-    catch
-        dictName = '';
-    end
-    if ~isempty(dictName) && isfile(dictName)
-        try
-            defsForThisModel = readDictionaryDefinitions(dictName, modelName);
-            symbolNames = fieldnames(defsForThisModel);
-            for symbolIndex = 1:numel(symbolNames)
-                symbolName = symbolNames{symbolIndex};
-                def = defsForThisModel.(symbolName);
-                if isKey(sigDefs, symbolName)
-                    sigDefs(symbolName) = [sigDefs(symbolName), def];
-                else
-                    sigDefs(symbolName) = def;
-                end
-            end
-        catch dictErr
-            issues(end + 1) = struct('Category', 'SLDD', 'Severity', 'warning', ... %#ok<AGROW>
-                'Model', modelName, 'Port', '', ...
-                'Description', ['Could not read the data dictionary: ' ...
-                    dictErr.message], ...
-                'FixMethod', 'none', 'FixData', struct());
-        end
-    end
-end
-
-% --- resolve config parameter mismatches --------------------------------
-if ~isempty(solverEntries)
-    values = {solverEntries.Value};
-    uniqueValues = unique(values);
-    if numel(uniqueValues) > 1
-        counts = cellfun(@(v) sum(strcmp(values, v)), uniqueValues);
-        [~, majorityIndex] = max(counts);
-        majorityValue = uniqueValues{majorityIndex};
-        for entryIndex = 1:numel(solverEntries)
-            if ~strcmp(solverEntries(entryIndex).Value, majorityValue)
-                issues(end + 1) = struct('Category', 'Config', ... %#ok<AGROW>
-                    'Severity', 'warning', ...
-                    'Model', solverEntries(entryIndex).Model, ...
-                    'Port', '', 'Description', sprintf( ...
-                        'SolverType "%s" differs from the majority ("%s").', ...
-                        solverEntries(entryIndex).Value, majorityValue), ...
-                    'FixMethod', 'MatchParent', ...
-                    'FixData', struct('Parameter', 'SolverType', ...
-                        'TargetValue', majorityValue));
-            end
-        end
-    end
-end
-
-% --- resolve SLDD symbol conflicts --------------------------------------
-symbolNames = keys(sigDefs);
-for symbolIndex = 1:numel(symbolNames)
-    defs = sigDefs(symbolNames{symbolIndex});
-    if numel(defs) < 2
-        continue;
-    end
-    minStrings = arrayfun(@(d) mat2str(d.Min), defs, 'UniformOutput', false);
-    maxStrings = arrayfun(@(d) mat2str(d.Max), defs, 'UniformOutput', false);
-    if numel(unique(minStrings)) > 1 || numel(unique(maxStrings)) > 1
-        involvedModels = unique({defs.Model});
-        issues(end + 1) = struct('Category', 'SLDD', 'Severity', 'error', ... %#ok<AGROW>
-            'Model', strjoin(involvedModels, ', '), ...
-            'Port', symbolNames{symbolIndex}, ...
-            'Description', sprintf(['%d definition(s) of "%s" with ', ...
-                'differing Min/Max across dictionaries.'], numel(defs), ...
-                symbolNames{symbolIndex}), ...
-            'FixMethod', 'SyncToMaster', ...
-            'FixData', struct('Definitions', defs, 'MasterIndex', 1));
-    end
-end
-
-progressFcn(1, 'Validation done.');
-end
-
-function closeLoadedModels(loadedHere)
-%CLOSELOADEDMODELS Close models this validation run opened, best-effort.
-
-for loadedIndex = 1:numel(loadedHere)
-    try
-        close_system(loadedHere{loadedIndex}, 0);
-    catch
-    end
-end
-end
-
-function defs = readDictionaryDefinitions(dictName, modelName)
-%READDICTIONARYDEFINITIONS Simulink.Signal/Simulink.Parameter Min/Max
-% entries in a data dictionary's "Design Data" section, keyed by symbol
-% name and tagged with the model that references the dictionary.
-%
-% NOTE: adjust the section name below if your team's dictionaries use a
-% different section for Simulink.Signal/Simulink.Parameter objects.
-
-defs = struct();
-dictObj = Simulink.data.dictionary.open(dictName);
-cleanupObj = onCleanup(@() safeCloseDictionary(dictObj)); %#ok<NASGU>
-
-section = getSection(dictObj, 'Design Data');
-entries = find(section);
-for entryIndex = 1:numel(entries)
-    entryName = entries(entryIndex).Name;
-    try
-        entryValue = getValue(entries(entryIndex));
-    catch
-        continue;
-    end
-    if isprop(entryValue, 'Min') && isprop(entryValue, 'Max')
-        fieldName = matlab.lang.makeValidName(entryName);
-        defs.(fieldName) = struct('DictName', dictName, ...
-            'Min', entryValue.Min, 'Max', entryValue.Max, ...
-            'Model', modelName, 'Symbol', entryName);
-    end
-end
-end
-
-function safeCloseDictionary(dictObj)
-%SAFECLOSEDICTIONARY Close a dictionary handle without raising errors.
-
-try
-    close(dictObj);
-catch
-end
-end
-
-function results = applyValidationFixes(issues, progressFcn)
-%APPLYVALIDATIONFIXES Apply the chosen FixMethod for each fixable issue.
-%
-%   results = applyValidationFixes(issues, progressFcn)
-%
-% results is a struct array with fields Success (logical) and Message.
-
-if nargin < 2 || isempty(progressFcn)
-    progressFcn = @(fraction, message) [];
-end
-
-results = struct('Success', {}, 'Message', {});
-total = numel(issues);
-if total == 0
-    return;
-end
-
-for fixIndex = 1:total
-    issue = issues(fixIndex);
-    progressFcn((fixIndex - 1) / total, sprintf('Fixing %s...', issue.Model));
-
-    try
-        switch issue.FixMethod
-            case 'SetOutportConstant'
-                results(end + 1) = fixOutportSampleTime(issue); %#ok<AGROW>
-
-            case 'MatchParent'
-                results(end + 1) = fixConfigParameter(issue); %#ok<AGROW>
-
-            case 'SyncToMaster'
-                results(end + 1) = fixSlddSync(issue); %#ok<AGROW>
-
-            case 'InsertUnitDelay'
-                results(end + 1) = struct('Success', false, ... %#ok<AGROW>
-                    'Message', ['Insert Unit Delay must be applied after ', ...
-                        'Generate, from the Loop Breaker section below.']);
-
-            otherwise
-                results(end + 1) = struct('Success', false, ... %#ok<AGROW>
-                    'Message', sprintf('Unknown fix method "%s".', ...
-                        issue.FixMethod));
-        end
-    catch applyErr
-        results(end + 1) = struct('Success', false, ... %#ok<AGROW>
-            'Message', sprintf('%s: %s', issue.Model, errorDetails(applyErr)));
-    end
-end
-
-progressFcn(1, 'Fixes applied.');
-end
-
-function result = fixOutportSampleTime(issue)
-%FIXOUTPORTSAMPLETIME Set an Outport's sample time to inherited (-1).
-
-blockPath = issue.FixData.Block;
-modelName = strtok(blockPath, '/');
-wasLoaded = bdIsLoaded(modelName);
-if ~wasLoaded
-    load_system(modelName);
-end
-set_param(blockPath, 'SampleTime', '-1');
-save_system(modelName);
-if ~wasLoaded
-    close_system(modelName, 0);
-end
-result = struct('Success', true, 'Message', sprintf( ...
-    '%s: Outport "%s" sample time set to inherited (-1).', ...
-    issue.Model, issue.Port));
-end
-
-function result = fixConfigParameter(issue)
-%FIXCONFIGPARAMETER Set a configuration parameter to the target value.
-
-modelName = issue.Model;
-wasLoaded = bdIsLoaded(modelName);
-if ~wasLoaded
-    load_system(modelName);
-end
-set_param(modelName, issue.FixData.Parameter, issue.FixData.TargetValue);
-save_system(modelName);
-if ~wasLoaded
-    close_system(modelName, 0);
-end
-result = struct('Success', true, 'Message', sprintf( ...
-    '%s: %s set to %s.', modelName, issue.FixData.Parameter, ...
-    issue.FixData.TargetValue));
-end
-
-function result = fixSlddSync(issue)
-%FIXSLDDSYNC Sync every non-master definition of a symbol to the master.
-%
-% NOTE: adjust the section name below if your team's dictionaries use a
-% different section for Simulink.Signal/Simulink.Parameter objects.
-
-defs = issue.FixData.Definitions;
-masterIndex = issue.FixData.MasterIndex;
-master = defs(masterIndex);
-syncedDicts = {};
-
-for defIndex = 1:numel(defs)
-    if defIndex == masterIndex
-        continue;
-    end
-    def = defs(defIndex);
-    dictObj = Simulink.data.dictionary.open(def.DictName);
-    try
-        section = getSection(dictObj, 'Design Data');
-        entry = getEntry(section, def.Symbol);
-        value = getValue(entry);
-        value.Min = master.Min;
-        value.Max = master.Max;
-        setValue(entry, value);
-        saveChanges(dictObj);
-        syncedDicts{end + 1} = def.DictName; %#ok<AGROW>
-    catch
-        close(dictObj);
-        rethrow(lasterror()); %#ok<LERR>
-    end
-    close(dictObj);
-end
-
-result = struct('Success', true, 'Message', sprintf( ...
-    '%s: synced %d dictionary(ies) to %s (Min=%s, Max=%s).', ...
-    issue.Port, numel(syncedDicts), master.DictName, ...
-    mat2str(master.Min), mat2str(master.Max)));
 end
