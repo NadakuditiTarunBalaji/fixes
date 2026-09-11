@@ -1,22 +1,11 @@
 function issues = checkSampleTimes(modelsFolder, selectedModels, progressFcn)
-%CHECKSAMPLETIMES Detect root Outports whose driving signal has a constant
-% (inf) sample time while the Outport itself declares a non-constant sample
-% time.  This is the exact condition that triggers Simulink's built-in
-% "Invalid root Outport block connection" diagnostic during model update.
+%CHECKSAMPLETIMES Deep-scans root Outports across all referenced models to
+% detect signals driven by constant sources (Constant blocks, Ground,
+% parameters, Goto/From tags, or internal Subsystems) where the Outport
+% is not explicitly declared as SampleTime = 'Inf'.
 %
-%   issues = checkSampleTimes(modelsFolder, selectedModels)
-%   issues = checkSampleTimes(modelsFolder, selectedModels, progressFcn)
-%
-% ROOT CAUSE FIX (vs. the original version):
-%   1. The driver check now walks the ENTIRE signal chain backward through
-%      intermediate blocks (Gain, Data Type Conversion, Sum, etc.) instead
-%      of only looking at the immediately connected block type.  This
-%      catches "Constant -> Gain -> Outport" and similar chains.
-%   2. The Outport condition now flags ANY non-constant sample time (not
-%      just empty / -1), matching what Simulink's own diagnostic checks.
-%   3. The FixMethod is 'SetOutportConstant' (set the Outport to Inf)
-%      instead of 'InsertUnitDelay', which is the correct fix for a sample
-%      time mismatch between a constant driver and a non-constant Outport.
+% This prevents Simulink's fatal "Invalid root Outport block connection"
+% error during parent model generation.
 
 if nargin < 3 || isempty(progressFcn)
     progressFcn = @(pct, msg) fprintf('[%.0f%%] %s\n', pct*100, msg);
@@ -46,14 +35,19 @@ for i = 1:numModels
                 issues(end + 1) = struct( ... %#ok<AGROW>
                     'Category', 'Info', 'Severity', 'warning', ...
                     'Model', modelName, 'Port', '', ...
-                    'Description', sprintf( ...
-                        'Model file not found for "%s" - sample time check skipped.', ...
-                        modelName), ...
+                    'Description', sprintf('Model file not found for "%s".', modelName), ...
                     'FixMethod', 'none', 'FixData', struct());
                 continue;
             end
             load_system(modelFile);
             openedByUs = true;
+        end
+
+        % Check model-level diagnostic setting
+        diagSetting = 'error';
+        try
+            diagSetting = get_param(modelName, 'InvalidRootInportOutportConnection');
+        catch
         end
 
         outportPaths = find_system(modelName, 'SearchDepth', 1, ...
@@ -67,44 +61,35 @@ for i = 1:numModels
             outportName = get_param(outportPath, 'Name');
 
             try
-                % --- FIX #2: check if the Outport declares a non-constant
-                %     sample time (ANY value that is not 'inf') ---
                 outportST = strtrim(get_param(outportPath, 'SampleTime'));
-                isOutportNonConstant = isempty(outportST) || ...
-                    ~strcmpi(outportST, 'inf');
-
-                if ~isOutportNonConstant
-                    continue;   % Outport is explicitly constant — no mismatch
+                
+                % If already explicitly set to Inf/inf, it is valid
+                if strcmpi(outportST, 'inf')
+                    continue;
                 end
 
-                % --- FIX #1: trace the FULL signal chain backward to
-                %     determine whether the driving signal is constant ---
-                if ~isDrivenByConstantSignal(outportPath, 8)
-                    continue;   % Driver is not constant — no mismatch
-                end
+                % Deep-trace backward through Goto/From, Subsystems, and blocks
+                visitedBlocks = {};
+                isConst = traceSignalSourceIsConstant(modelName, outportPath, visitedBlocks, 15);
 
-                % Both conditions met: non-constant Outport + constant driver
-                % This is the exact condition Simulink flags as
-                % "Invalid root Outport block connection".
-                issues(end + 1) = struct( ... %#ok<AGROW>
-                    'Category', 'SampleTime', ...
-                    'Severity', 'error', ...
-                    'Model', modelName, ...
-                    'Port', outportName, ...
-                    'Description', sprintf(['Root Outport "%s" in model ' ...
-                        '"%s" does not have a constant sample time ' ...
-                        '(SampleTime = "%s") but is driven by a signal ' ...
-                        'with a constant (inf) sample time. This will ' ...
-                        'cause an "Invalid root Outport block connection" ' ...
-                        'error when the model is referenced from a parent.'], ...
-                        outportName, modelName, outportST), ...
-                    'FixMethod', 'SetOutportConstant', ...
-                    'FixData', struct( ...
-                        'ModelName', modelName, ...
-                        'OutportPath', outportPath));
+                if isConst
+                    issues(end + 1) = struct( ... %#ok<AGROW>
+                        'Category', 'SampleTime', ...
+                        'Severity', 'error', ...
+                        'Model', modelName, ...
+                        'Port', outportName, ...
+                        'Description', sprintf(['Root Outport "%s" in model "%s" has ' ...
+                            'SampleTime = "%s", but is driven by a Constant source. ' ...
+                            'Simulink will abort diagram build with "Invalid root ' ...
+                            'Outport block connection".'], ...
+                            outportName, modelName, outportST), ...
+                        'FixMethod', 'SetOutportConstant', ...
+                        'FixData', struct( ...
+                            'ModelName', modelName, ...
+                            'OutportPath', outportPath));
+                end
             catch
-                % A single port that cannot be traced should not abort
-                % the whole scan - skip it and move on.
+                % Skip individual untraceable port
             end
         end
 
@@ -118,7 +103,7 @@ for i = 1:numModels
         issues(end + 1) = struct( ... %#ok<AGROW>
             'Category', 'Info', 'Severity', 'warning', ...
             'Model', modelName, 'Port', '', ...
-            'Description', sprintf('Could not fully analyze model "%s": %s', ...
+            'Description', sprintf('Could not analyze model "%s": %s', ...
                 modelName, modelErr.message), ...
             'FixMethod', 'none', 'FixData', struct());
     end
@@ -128,112 +113,120 @@ progressFcn(1, 'Sample time check complete.');
 end
 
 % =========================================================================
-%  SIGNAL-CHAIN TRACE HELPERS  (new — these are the root-cause fix)
+%  DEEP RECURSIVE SIGNAL TRACER (Goto/From, Subsystems, Math & Routing)
 % =========================================================================
-
-function isConst = isDrivenByConstantSignal(outportPath, maxDepth)
-%ISDRIVENBYCONSTANTSIGNAL Trace backward from a root Outport through the
-% signal chain to determine whether the driving signal has a constant (inf)
-% sample time.  Walks through intermediate blocks (Gain, Data Type
-% Conversion, Sum, Bus Creator, etc.) up to maxDepth levels.
-%
-% Returns true only when the ultimate source of the signal is a block with
-% a constant sample time (Constant, Ground, or any block whose SampleTime
-% parameter is explicitly 'inf').
-
-if nargin < 2, maxDepth = 8; end
+function isConst = traceSignalSourceIsConstant(modelName, blockPath, visited, depthLeft)
 isConst = false;
+if depthLeft <= 0 || ismember(blockPath, visited)
+    return;
+end
+visited{end + 1} = blockPath;
 
 try
-    portHandles = get_param(outportPath, 'PortHandles');
-    inportHandle = portHandles.Inport;
-    if isempty(inportHandle), return; end
-
-    lineHandle = get_param(inportHandle, 'LineHandle');
-    if isempty(lineHandle) || lineHandle == -1, return; end
-
-    srcPortHandle = get_param(lineHandle, 'SrcPortHandle');
-    if isempty(srcPortHandle) || srcPortHandle == -1, return; end
-
-    isConst = traceConstantSampleTime(srcPortHandle, maxDepth);
+    bType = get_param(blockPath, 'BlockType');
 catch
-    isConst = false;
-end
-end
-
-function isConst = traceConstantSampleTime(srcPortHandle, maxDepth)
-%TRACECONSTANTSAMPLETIME Recursively walk backward through the signal
-% chain starting at srcPortHandle.  Returns true when the signal at this
-% point has a constant (inf) sample time.
-%
-% Decision logic at each block:
-%   1. Inherently constant block types (Constant, Ground) → true
-%   2. Explicit SampleTime parameter = 'inf'              → true
-%   3. Explicit SampleTime parameter = other value         → false
-%   4. Inport (inherits from parent, unknown statically)   → false
-%   5. Otherwise: recurse into ALL input ports; the output
-%      is constant only when every input is constant.
-
-if maxDepth <= 0 || isempty(srcPortHandle) || srcPortHandle == -1
-    isConst = false;
     return;
 end
 
-srcBlockPath = get_param(srcPortHandle, 'Parent');
-srcBlockType = get_param(srcBlockPath, 'BlockType');
-
-% --- Rule 1: inherently constant block types ---
-if strcmp(srcBlockType, 'Constant') || strcmp(srcBlockType, 'Ground')
+% 1. Inherently Constant Sources
+if strcmp(bType, 'Constant') || strcmp(bType, 'Ground') || strcmp(bType, 'EnumeratedConstant')
     isConst = true;
     return;
 end
 
-% --- Rule 2 & 3: explicit SampleTime parameter ---
+% 2. Explicit Constant Sample Time on the block itself
 try
-    blockST = strtrim(get_param(srcBlockPath, 'SampleTime'));
-    if strcmpi(blockST, 'inf')
-        isConst = true;       % Rule 2
+    stVal = strtrim(get_param(blockPath, 'SampleTime'));
+    if strcmpi(stVal, 'inf')
+        isConst = true;
         return;
-    elseif ~isempty(blockST) && ~strcmp(blockST, '-1')
-        isConst = false;      % Rule 3: explicit non-constant rate
-        return;
-    end
-    % '-1' or empty → inherited, keep tracing
-catch
-    % Block has no SampleTime parameter → inherited, keep tracing
-end
-
-% --- Rule 4: Inport inherits from the parent model ---
-if strcmp(srcBlockType, 'Inport')
-    isConst = false;
-    return;
-end
-
-% --- Rule 5: recurse into all input ports ---
-try
-    portHandles = get_param(srcBlockPath, 'PortHandles');
-    inports = portHandles.Inport;
-    if isempty(inports)
+    elseif ~isempty(stVal) && ~strcmp(stVal, '-1') && ~strcmp(stVal, '[ -1, -1 ]')
+        % Explicit discrete or continuous rate (not constant)
         isConst = false;
         return;
     end
+catch
+end
 
-    % Normalize to a row vector (scalar handle vs. array)
-    if isnumeric(inports) && isscalar(inports)
-        inports = [inports];
+% 3. Inport at root level inherits from outside (not locally constant)
+if strcmp(bType, 'Inport') && strcmp(get_param(blockPath, 'Parent'), modelName)
+    isConst = false;
+    return;
+end
+
+% 4. Handle "From" Block (Cross-reference Goto tag)
+if strcmp(bType, 'From')
+    try
+        tag = get_param(blockPath, 'GotoTag');
+        gotoList = find_system(modelName, 'FollowLinks', 'on', 'LookUnderMasks', 'all', ...
+            'BlockType', 'Goto', 'GotoTag', tag);
+        if ~isempty(gotoList)
+            gotoBlock = gotoList{1};
+            isConst = traceSignalSourceIsConstant(modelName, gotoBlock, visited, depthLeft - 1);
+        end
+    catch
+    end
+    return;
+end
+
+% 5. Handle "Goto" Block
+if strcmp(bType, 'Goto')
+    portHandles = get_param(blockPath, 'PortHandles');
+    if ~isempty(portHandles.Inport)
+        line = get_param(portHandles.Inport(1), 'LineHandle');
+        if line ~= -1
+            srcPort = get_param(line, 'SrcPortHandle');
+            if srcPort ~= -1
+                srcBlock = get_param(srcPort, 'Parent');
+                isConst = traceSignalSourceIsConstant(modelName, srcBlock, visited, depthLeft - 1);
+            end
+        end
+    end
+    return;
+end
+
+% 6. Handle "SubSystem" Block (Trace internal Outport driving this output)
+if strcmp(bType, 'SubSystem')
+    % When tracing a Subsystem output, find which Inport block of the Outport was connected
+    % Default to inspecting Outport blocks inside the subsystem
+    try
+        subOutports = find_system(blockPath, 'SearchDepth', 1, 'BlockType', 'Outport');
+        if ~isempty(subOutports)
+            isConst = true;
+            for s = 1:numel(subOutports)
+                if ~traceSignalSourceIsConstant(modelName, subOutports{s}, visited, depthLeft - 1)
+                    isConst = false;
+                    return;
+                end
+            end
+        end
+    catch
+    end
+    return;
+end
+
+% 7. General Block / Outport: Trace all driving input lines
+try
+    portHandles = get_param(blockPath, 'PortHandles');
+    inports = portHandles.Inport;
+    if isempty(inports)
+        return;
     end
 
-    % The output is constant only when EVERY input is constant.
-    % (e.g. Sum with one constant and one discrete input → discrete output)
     isConst = true;
-    for ip = 1:numel(inports)
-        inLineHandle = get_param(inports(ip), 'LineHandle');
-        if isempty(inLineHandle) || inLineHandle == -1
-            isConst = false;   % Unconnected input → unknown
+    for k = 1:numel(inports)
+        line = get_param(inports(k), 'LineHandle');
+        if line == -1
+            isConst = false;
             return;
         end
-        prevSrcPort = get_param(inLineHandle, 'SrcPortHandle');
-        if ~traceConstantSampleTime(prevSrcPort, maxDepth - 1)
+        srcPort = get_param(line, 'SrcPortHandle');
+        if srcPort == -1
+            isConst = false;
+            return;
+        end
+        srcBlock = get_param(srcPort, 'Parent');
+        if ~traceSignalSourceIsConstant(modelName, srcBlock, visited, depthLeft - 1)
             isConst = false;
             return;
         end
@@ -244,9 +237,8 @@ end
 end
 
 % =========================================================================
-%  FILE-FINDER HELPER  (unchanged)
+%  HELPER
 % =========================================================================
-
 function modelFile = findModelFileOnDisk(modelsFolder, modelName)
 modelFile = '';
 candidates = dir(fullfile(modelsFolder, '**', [modelName '.slx']));
