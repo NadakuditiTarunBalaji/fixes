@@ -6,19 +6,16 @@ function teamtools
 % Opens a single window with two tabs:
 %   1. Build Parent Model  - generate a parent model from referenced
 %      models (preview first), with a search box that filters the
-%      available-models list, a Validate First step that scans the
-%      selected models for build-blocking issues (with a Diagnostics
-%      table and an SLDD Manager table plus a Fix All Issues action),
-%      and an optional loop breaker that inserts a Unit Delay on a
-%      chosen BACKWARD connection (bottom->top / right->left); forward
-%      connections are never listed. The loop breaker is the manual
-%      fallback for when Auto insert Unit Delays is unchecked.
+%      available-models list, and an optional loop breaker that
+%      inserts a Unit Delay on a chosen BACKWARD connection
+%      (bottom->top / right->left); forward connections are never
+%      listed. The loop breaker is the manual fallback for when
+%      Auto insert Unit Delays is unchecked.
 %   2. Extract Attributes  - collect attribute records from .m files
 %      using a selected subsystem's port names as search tags.
 %
 % All heavy lifting is done by shared engines (buildParentModelCore.m,
-% extractAttributesCore.m, validateModels.m, applyFixes.m, and their
-% checkXxx.m/fixXxx.m helpers), which are also used by the command-line
+% extractAttributesCore.m), which are also used by the command-line
 % tools - a fix in one place fixes every front-end.
 %
 % Requirements: MATLAB R2020a or newer with Simulink.
@@ -65,15 +62,13 @@ end
 
 % ---- shared state ---------------------------------------------------------
 state = struct( ...
-    'AvailableNames',    {{}}, ...   % model names matching the available list
-    'AvailableLabels',   {{}}, ...   % list labels without the [added] marker
-    'AvailableFilter',   '', ...     % search text applied to the available list
-    'Connections',       {{}}, ...   % connection structs for the loop breaker
-    'LastGeneratedModel', '', ...
-    'ExtractOutput',     '', ...
-    'ValidationIssues',  struct('Category', {}, 'Severity', {}, 'Model', {}, ...
-        'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {}), ...
-    'ValidationFolder',  '');
+    'AvailableNames',         {{}}, ...   % model names matching the available list
+    'AvailableLabels',        {{}}, ...   % list labels without the [added] marker
+    'AvailableFilter',        '', ...     % search text applied to the available list
+    'Connections',            {{}}, ...   % connection structs for the loop breaker
+    'LastGeneratedModel',     '', ...
+    'ExtractOutput',          '', ...
+    'LastImportedMissing',    {{}});      % missing models skipped in last Excel import
 
 % ---- window ---------------------------------------------------------------
 app = uifigure('Name', 'Simulink Team Tools', ...
@@ -96,8 +91,7 @@ headerLabel.Layout.Column = 1;
 clearAllTopBtn = uibutton(root, 'push', 'Text', 'Clear All', ...
     'FontSize', 11, 'ButtonPushedFcn', @clearAllData);
 safeTooltip(clearAllTopBtn, ['Resets EVERY input on both tabs: model ', ...
-    'lists, folders, names, options, validation results, and loop ', ...
-    'breaker fields. The logs are kept.']);
+    'lists, folders, names, options, and loop breaker fields. The logs are kept.']);
 clearAllTopBtn.Layout.Row = 1;
 clearAllTopBtn.Layout.Column = 2;
 
@@ -124,8 +118,7 @@ g1.ColumnSpacing = 8;
 
 hint1 = uilabel(g1, ...
     'Text', ['1) Choose the models folder    2) Add models in the order ' ...
-    'they should appear    3) Preview    4) Generate  ' ...
-    '(Validate First is optional, before Generate)'], ...
+    'they should appear    3) Preview    4) Generate'], ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
 hint1.Layout.Row = 1;
 hint1.Layout.Column = [1 6];
@@ -172,7 +165,7 @@ availableList.Layout.Column = [1 2];
 safeTooltip(availableList, ...
     'Ctrl+click or Shift+click to select several models at once');
 
-btnGrid = uigridlayout(g1, [6 1]);
+btnGrid = uigridlayout(g1, [7 1]); % 7 rows to support Import Excel
 btnGrid.Layout.Row = 4;
 btnGrid.Layout.Column = 3;
 btnGrid.Padding = [2 2 2 2];
@@ -187,6 +180,13 @@ addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', ...
 safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
     'when a search filter is active, only the matching models ', ...
     'are added.']);
+
+importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @importFromExcel);
+safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
+    'to import an ordered list of models from Column A.']);
+
 removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', ...
     'FontSize', 11, ...
     'ButtonPushedFcn', @removeModel);
@@ -297,16 +297,6 @@ safeTooltip(chkAutoDelay, ['Feedback signals (a bottom model feeding a ', ...
 chkAutoDelay.Layout.Row = 9;
 chkAutoDelay.Layout.Column = [4 6];
 
-validateBtn = uibutton(g1, 'push', 'Text', 'Validate First', ...
-    'FontSize', 12, 'ButtonPushedFcn', @doValidate);
-safeTooltip(validateBtn, ['Scans the selected models for build-blocking ', ...
-    'issues (configuration parameter mismatches, Outport sample times, ', ...
-    'and conflicting Simulink.Signal/Parameter definitions across ', ...
-    'linked data dictionaries) before you spend time on Generate. ', ...
-    'Results appear in the Diagnostics and SLDD Manager tabs below.']);
-validateBtn.Layout.Row = 10;
-validateBtn.Layout.Column = 1;
-
 previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
     'FontSize', 12, ...
     'ButtonPushedFcn', @doPreview);
@@ -315,14 +305,9 @@ previewBtn.Layout.Column = [2 3];
 
 generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
     'FontSize', 12, ...
-    'FontWeight', 'bold', 'ButtonPushedFcn', @doGenerate);
+    'FontWeight', 'bold', 'Enable', 'off', 'ButtonPushedFcn', @doGenerate); % Disabled by default
 generateBtn.Layout.Row = 10;
 generateBtn.Layout.Column = [4 5];
-
-validateStatusLabel = uilabel(g1, 'Text', '', 'FontWeight', 'bold', ...
-    'HorizontalAlignment', 'center');
-validateStatusLabel.Layout.Row = 10;
-validateStatusLabel.Layout.Column = 6;
 
 lblLoop = uilabel(g1, 'Text', ...
     ['Loop breaker - use when Simulink reports an algebraic loop:  ' ...
@@ -421,71 +406,16 @@ safeTooltip(chkCfgResolver, ['Enable "Signal name must resolve to signal ', ...
 chkCfgResolver.Layout.Row = 16;
 chkCfgResolver.Layout.Column = 6;
 
-% ---- log / diagnostics / SLDD manager tab group (row 17) ----------------
-logTabs = uitabgroup(g1);
-logTabs.Layout.Row = 17;
-logTabs.Layout.Column = [1 6];
-
-logTab  = uitab(logTabs, 'Title', 'Log');
-diagTab = uitab(logTabs, 'Title', 'Diagnostics');
-slddTab = uitab(logTabs, 'Title', 'SLDD Manager');
-
-logGrid = uigridlayout(logTab, [1 1]);
-logGrid.Padding = [4 4 4 4];
-log1 = uitextarea(logGrid, 'Editable', 'off', ...
+log1 = uitextarea(g1, 'Editable', 'off', ...
     'Value', {'Ready. Choose a models folder to begin.'});
-log1.Layout.Row = 1;
-log1.Layout.Column = 1;
-
-% ---- Diagnostics tab ----
-diagGrid = uigridlayout(diagTab, [3 1]);
-diagGrid.RowHeight = {24, '1x', 36};
-diagGrid.Padding = [8 8 8 8];
-diagGrid.RowSpacing = 6;
-
-diagStatusLabel = uilabel(diagGrid, ...
-    'Text', 'Click "Validate First" to scan the selected models.', ...
-    'FontWeight', 'bold', 'FontColor', [0.5 0.5 0.5]);
-diagStatusLabel.Layout.Row = 1;
-
-diagTable = uitable(diagGrid, ...
-    'ColumnName', {'#', 'Type', 'Model', 'Port', 'Description', 'Fix'}, ...
-    'ColumnWidth', {30, 90, 110, 90, '1x', 150}, ...
-    'ColumnEditable', [false false false false false true], ...
-    'ColumnFormat', {[], [], [], [], [], ...
-        {'InsertUnitDelay', 'SetOutportConstant', 'SyncToMaster', ...
-         'MatchParent', 'none'}}, ...
-    'Data', {}, ...
-    'CellEditCallback', @onFixMethodChanged);
-diagTable.Layout.Row = 2;
-
-fixAllBtn = uibutton(diagGrid, 'push', 'Text', 'Fix All Issues', ...
-    'FontSize', 11, 'FontWeight', 'bold', 'Enable', 'off', ...
-    'ButtonPushedFcn', @doFixAll);
-fixAllBtn.Layout.Row = 3;
-
-% ---- SLDD Manager tab ----
-slddGrid = uigridlayout(slddTab, [2 1]);
-slddGrid.RowHeight = {24, '1x'};
-slddGrid.Padding = [8 8 8 8];
-slddGrid.RowSpacing = 6;
-
-slddStatusLabel = uilabel(slddGrid, ...
-    'Text', 'SLDD conflicts appear here after validation.', ...
-    'FontWeight', 'bold', 'FontColor', [0.5 0.5 0.5]);
-slddStatusLabel.Layout.Row = 1;
-
-slddTable = uitable(slddGrid, ...
-    'ColumnName', {'Symbol', 'Dictionary', 'Min', 'Max', 'Status'}, ...
-    'ColumnWidth', {110, 190, 80, 80, 160}, ...
-    'Data', {});
-slddTable.Layout.Row = 2;
+log1.Layout.Row = 17;
+log1.Layout.Column = [1 6];
 
 % =========================================================================
 %  TAB 2 - EXTRACT ATTRIBUTES
 % =========================================================================
 g2 = uigridlayout(tab2, [9 6]);
-g2.RowHeight = {24, 30, 30, 30, 30, 34, 20, 90, '1x'};
+g2.RowHeight = {24, 30, 30, 30, 30, 34, 20, 150, '1x'};
 g2.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
 g2.Padding = [14 10 14 10];
 g2.RowSpacing = 6;
@@ -493,7 +423,7 @@ g2.ColumnSpacing = 8;
 
 hint2 = uilabel(g2, ...
     'Text', ['1) Click a subsystem in your Simulink model    2) Refresh    ' ...
-    '3) Choose folders    4) Extract'], ...
+    '3) Choose folder    4) Extract'], ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
 hint2.Layout.Row = 1;
 hint2.Layout.Column = [1 6];
@@ -526,9 +456,10 @@ lblInfo = uilabel(g2, 'Text', 'File information:', 'FontWeight', 'bold');
 lblInfo.Layout.Row = 3;
 lblInfo.Layout.Column = 4;
 
+% Added 'No metadata, no comments' choice as the 4th option
 infoDropDown = uidropdown(g2, ...
-    'Items', {'Both', 'Source comments', 'Metadata only', 'No comments'}, ...
-    'Value', 'Both');
+    'Items', {'Header + source comments', 'Header only', 'Source comments only', 'No metadata, no comments'}, ...
+    'Value', 'Header + source comments');
 infoDropDown.Layout.Row = 3;
 infoDropDown.Layout.Column = [5 6];
 
@@ -628,6 +559,12 @@ catch
 end
 end
 
+function invalidatePreview()
+%INVALIDATEPREVIEW Reset generate availability whenever settings/inputs change.
+previewBtn.Enable = 'on';
+generateBtn.Enable = 'off';
+end
+
 function onAppClose(~, ~)
 %ONAPPCLOSE Stop the log.txt diary, then close the window.
 
@@ -666,6 +603,9 @@ setpref('teamtools', 'ModelsFolder', chosenFolder);
 if isempty(strtrim(saveFolderEdit.Value))
     saveFolderEdit.Value = chosenFolder;
 end
+% Clear any previously imported missing models cache when switching folder
+state.LastImportedMissing = {};
+invalidatePreview();
 refreshModelList();
 end
 
@@ -673,6 +613,8 @@ function onModelsFolderChanged(~, ~)
 candidate = char(strtrim(modelsFolderEdit.Value));
 if isfolder(candidate)
     setpref('teamtools', 'ModelsFolder', candidate);
+    state.LastImportedMissing = {};
+    invalidatePreview();
     refreshModelList();
 elseif ~isempty(candidate)
     setStatus('That models folder does not exist.');
@@ -861,6 +803,9 @@ end
 wasChar = ischar(selectedList.Value);
 selectedList.Items = [selectedList.Items, newNames];
 setListSelection(selectedList, newNames, wasChar);
+
+% Invalidate preview layout as the selection changed
+invalidatePreview();
 updateAvailableLabels();
 
 message = sprintf('Added %d model(s).', numel(newNames));
@@ -869,6 +814,155 @@ if skippedCount > 0
         skippedCount);
 end
 setStatus(message);
+end
+
+function importFromExcel(~, ~)
+%IMPORTFROMEXCEL Upload an Excel/CSV spreadsheet to populate Selected list.
+
+% 1. Require models folder to be selected
+folder = char(strtrim(modelsFolderEdit.Value));
+if ~isfolder(folder) || isempty(state.AvailableNames)
+    notify(app, 'Please choose a valid models folder first to match imported models.', ...
+        'Folder Required', 'warning');
+    return;
+end
+
+% 2. Warn user if the current selected list is non-empty (Option a: Cleared first)
+if ~isempty(selectedList.Items)
+    proceed = confirmDialog(app, ...
+        sprintf(['Warning: Previously added/selected models (%d items) will be cleared.\n\n', ...
+        'Do you want to proceed and load the new list from Excel?'], numel(selectedList.Items)), ...
+        'Clear Existing Models?', 'Proceed', 'Cancel');
+    if ~proceed
+        setStatus('Import cancelled.');
+        return;
+    end
+end
+
+% 3. Open File Dialog
+[fileName, filePath] = uigetfile(...
+    {'*.xlsx;*.xlsm;*.xls;*.csv', 'Excel and CSV Sheets (*.xlsx, *.xlsm, *.xls, *.csv)'}, ...
+    'Select Excel/CSV Sheet');
+bringAppToFront();
+if isequal(fileName, 0) || isequal(filePath, 0)
+    return;
+end
+
+fullSheetPath = fullfile(filePath, fileName);
+setStatus('Parsing spreadsheet...');
+
+try
+    data = readcell(fullSheetPath);
+catch parseErr
+    logTo(log1, ['ERROR reading file: ' parseErr.message]);
+    notify(app, ['Failed to read spreadsheet file: ' parseErr.message], 'Read Error', 'error');
+    return;
+end
+
+if isempty(data)
+    notify(app, 'The selected spreadsheet is empty.', 'Empty Sheet', 'warning');
+    return;
+end
+
+% 4. Parse Column A
+colA = data(:, 1);
+rawNames = {};
+for r = 1:numel(colA)
+    val = colA{r};
+    if ismissing(val)
+        continue;
+    end
+    if isnumeric(val) || islogical(val)
+        val = num2str(val);
+    end
+    if ischar(val) || isstring(val)
+        valStr = strtrim(char(val));
+        if ~isempty(valStr)
+            rawNames{end + 1} = valStr; %#ok<AGROW>
+        end
+    end
+end
+
+if isempty(rawNames)
+    notify(app, 'No valid model names were found in Column A.', 'No Data Found', 'warning');
+    return;
+end
+
+% 5. Handle Duplicates: Keep only first occurrence, highlight skipped duplicates in Red
+cleanNames = {};
+duplicates = {};
+for idx = 1:numel(rawNames)
+    nameStr = rawNames{idx};
+    if any(strcmp(cleanNames, nameStr))
+        if ~any(strcmp(duplicates, nameStr))
+            duplicates{end + 1} = nameStr; %#ok<AGROW>
+        end
+    else
+        cleanNames{end + 1} = nameStr; %#ok<AGROW>
+    end
+end
+
+if ~isempty(duplicates)
+    % Print RED color trace to standard Command Window stream
+    fprintf(2, '!!! EXCEL IMPORT WARNING: Duplicate models skipped: %s\n', strjoin(duplicates, ', '));
+    logTo(log1, ['!!! DUPLICATE WARNING: Skipped duplicate rows for: ' strjoin(duplicates, ', ')]);
+end
+
+% 6. Validate parsed names against Available Models
+validModels = {};
+missingModels = {};
+
+for idx = 1:numel(cleanNames)
+    targetName = cleanNames{idx};
+    % Match case-sensitively or fallback case-insensitively to secure exact Available name
+    matchIdx = find(strcmpi(state.AvailableNames, targetName), 1);
+    if ~isempty(matchIdx)
+        validModels{end + 1} = state.AvailableNames{matchIdx}; %#ok<AGROW>
+    else
+        missingModels{end + 1} = targetName; %#ok<AGROW>
+    end
+end
+
+% 7. Handle missing models: prompt user
+if ~isempty(missingModels)
+    missingStr = strjoin(missingModels, '\n  - ');
+    msg = sprintf(['The following models from the sheet were NOT found in the models folder:\n\n  - %s\n\n', ...
+        'Do you want to skip these and continue with the remaining %d valid models?'], ...
+        missingStr, numel(validModels));
+    
+    proceedWithValid = confirmDialog(app, msg, 'Missing Models Found', 'Continue', 'Cancel');
+    if ~proceedWithValid
+        setStatus('Import aborted.');
+        logTo(log1, 'Excel import aborted by user due to missing models.');
+        return;
+    end
+end
+
+if isempty(validModels)
+    notify(app, 'No valid models remain to be imported.', 'Import Failed', 'warning');
+    return;
+end
+
+% 8. Overwrite selected models with exact validated order
+selectedList.Items = validModels;
+try
+    selectedList.Value = validModels{1};
+catch
+end
+
+% Maintain missing items context for display in Preview
+state.LastImportedMissing = missingModels;
+
+% Invalidate preview layout as the selection changed
+invalidatePreview();
+updateAvailableLabels();
+
+importedMsg = sprintf('Successfully imported %d model(s) from Excel.', numel(validModels));
+if ~isempty(missingModels)
+    importedMsg = sprintf('%s (skipped %d missing models)', importedMsg, numel(missingModels));
+end
+setStatus(importedMsg);
+logTo(log1, importedMsg);
 end
 
 function removeModel(~, ~)
@@ -889,6 +983,7 @@ selectedList.Items = items;
 if ~isempty(items)
     selectedList.Value = items{1};
 end
+invalidatePreview();
 updateAvailableLabels();
 setStatus(sprintf('Removed %d model(s).', removedCount));
 end
@@ -902,6 +997,8 @@ if isempty(selectedList.Items)
 end
 removedCount = numel(selectedList.Items);
 selectedList.Items = {};
+state.LastImportedMissing = {}; % reset spreadsheet warnings
+invalidatePreview();
 updateAvailableLabels();
 setStatus(sprintf('Cleared %d model(s) from the selected list.', ...
     removedCount));
@@ -916,6 +1013,7 @@ state.AvailableFilter = '';
 state.AvailableNames = {};
 state.AvailableLabels = {};
 selectedList.Items = {};
+state.LastImportedMissing = {}; % clear spreadsheet warnings
 updateAvailableLabels();
 modelsFolderEdit.Value = '';
 availableList.Items = {};
@@ -934,6 +1032,10 @@ layoutDrop.Value = 'Horizontal (side by side)';
 chkColor.Value = true;
 chkAutoDelay.Value = true;
 
+% --- Reset Preview and Generate button visibility states
+previewBtn.Enable = 'on';
+generateBtn.Enable = 'off';
+
 % --- Tab 1: loop breaker
 connModelEdit.Value = '';
 chkDelayFilter.Value = false;
@@ -951,24 +1053,11 @@ chkCfgOutports.Value = true;
 chkCfgPropagation.Value = true;
 chkCfgResolver.Value = true;
 
-% --- Tab 1: validation / diagnostics / SLDD manager
-state.ValidationIssues = struct('Category', {}, 'Severity', {}, ...
-    'Model', {}, 'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {});
-state.ValidationFolder = '';
-diagTable.Data = {};
-diagStatusLabel.Text = 'Click "Validate First" to scan the selected models.';
-diagStatusLabel.FontColor = [0.5 0.5 0.5];
-slddTable.Data = {};
-slddStatusLabel.Text = 'SLDD conflicts appear here after validation.';
-slddStatusLabel.FontColor = [0.5 0.5 0.5];
-fixAllBtn.Enable = 'off';
-validateStatusLabel.Text = '';
-
 % --- Tab 2: extract attributes
 subsystemLabel.Text = '<no subsystem selected>';
 subsystemLabel.FontColor = [0.75 0 0];
 portDropDown.Value = 'Both';
-infoDropDown.Value = 'Both';
+infoDropDown.Value = 'Header + source comments';
 searchEdit.Value = '';
 destEdit.Value = '';
 chkCase2.Value = true;
@@ -1038,6 +1127,9 @@ end
 
 selectedList.Items = items;
 setListSelection(selectedList, selectedValues, wasChar);
+
+% Reordering shifts models and invalidates the cached preview setup
+invalidatePreview();
 end
 
 function browseSaveFolder(~, ~)
@@ -1174,21 +1266,33 @@ try
     p.close();
 catch previewError
     p.close();
-    previewBtn.Enable = 'on';
+    invalidatePreview(); % Reset buttons state back to default on error
     setStatus('Preview failed.');
     logTo(log1, ['ERROR: ' errorDetails(previewError)]);
     notify(app, errorDetails(previewError), 'Preview failed', 'error');
     return;
 end
-previewBtn.Enable = 'on';
-logMany(log1, renderPlanLines(result));
+
+% PREVIEW SUCCESS: Lock Preview, Enable ONLY Generate button
+previewBtn.Enable = 'off';
+generateBtn.Enable = 'on';
+
+% Pass skipped missing context explicitly to formatting engine
+logMany(log1, renderPlanLines(result, state.LastImportedMissing));
 setStatus('Preview complete - review it above, then press Generate.');
-notify(app, sprintf(['Preview complete.\n\n%d model(s), %d internal ', ...
-    'connection(s), %d root input(s), %d root output(s).\n', ...
-    'Check the log for warnings before generating.'], ...
+
+msgText = sprintf(['Preview complete.\n\n%d model(s), %d internal ', ...
+    'connection(s), %d root input(s), %d root output(s).\n\n', ...
+    'Preview is locked. Only the Generate button is enabled.'], ...
     numel(result.Models), result.Counts.Internal, ...
-    result.Counts.RootInputs, result.Counts.RootOutputs), ...
-    'Preview complete', 'info');
+    result.Counts.RootInputs, result.Counts.RootOutputs);
+
+if ~isempty(state.LastImportedMissing)
+    msgText = sprintf('%s\n\n!!! CAUTION: %d missing model(s) imported from Excel were skipped. See Log area details.', ...
+        msgText, numel(state.LastImportedMissing));
+end
+
+notify(app, msgText, 'Preview complete', 'info');
 end
 
 function doGenerate(~, ~)
@@ -1263,14 +1367,15 @@ try
 catch generateError
     p.close();
     generateBtn.Enable = 'on';
-    previewBtn.Enable = 'on';
+    previewBtn.Enable = 'off';
     setStatus('Generation failed.');
     logTo(log1, ['ERROR: ' errorDetails(generateError)]);
     notify(app, errorDetails(generateError), 'Generation failed', 'error');
     return;
 end
-generateBtn.Enable = 'on';
-previewBtn.Enable = 'on';
+
+% Generation completed successfully: Reset buttons back to default state
+invalidatePreview();
 
 if result.Cancelled
     setStatus('Generation cancelled.');
@@ -1325,14 +1430,10 @@ logMany(log1, lines);
 state.LastGeneratedModel = result.TargetModel;
 setpref('teamtools', 'GeneratedModel', result.TargetModel);
 connModelEdit.Value = result.TargetModel;
-
-% Auto-populate Tab 2 destination with absolute path so Extract works immediately
-autoDestFile = fullfile(saveFolder, [modelName '_data.m']);
-destEdit.Value = autoDestFile;
-setpref('teamtools', 'OutputFile', autoDestFile);
-logTo(log1, sprintf(['Extract destination (Tab 2) set to:\n  %s\n', ...
-    'Edit it there if you want a different name.'], autoDestFile));
-
+destEdit.Value = [result.TargetModel, '_data.m'];
+logTo(log1, sprintf(['Extract destination (Tab 2) set to "%s_data.m" - ', ...
+    'edit it there if you want a different name.'], ...
+    result.TargetModel));
 refreshConnections();
 
 if isempty(result.Warnings)
@@ -1362,282 +1463,6 @@ else
         numel(result.Warnings), result.OutputFile, extraText), ...
         'Generation complete - check warnings', 'warning');
 end
-end
-
-% -------------------------------------------------------------------
-%  VALIDATE FIRST / DIAGNOSTICS / SLDD MANAGER
-% -------------------------------------------------------------------
-function doValidate(~, ~)
-%DOVALIDATE Scan the selected models for build-blocking issues.
-% Delegates to validateModels.m (which in turn calls checkSampleTimes.m,
-% checkConfigConsistency.m, and checkSLDDConflicts.m).
-
-[folder, models] = validateTab1();
-if isempty(folder) || isempty(models)
-    return;
-end
-
-validateBtn.Enable = 'off';
-generateBtn.Enable = 'off';
-previewBtn.Enable = 'off';
-logTabs.SelectedTab = diagTab;
-setStatus('Validating...');
-logTo(log1, sprintf('Validate First: scanning %d model(s).', numel(models)));
-
-p = makeProgress(app, 'Validating models');
-try
-    issues = validateModels(folder, models, ...
-        @(fraction, message) p.set(fraction, message));
-    p.close();
-catch validateError
-    p.close();
-    validateBtn.Enable = 'on';
-    generateBtn.Enable = 'on';
-    previewBtn.Enable = 'on';
-    setStatus('Validation failed.');
-    logTo(log1, ['ERROR: ' errorDetails(validateError)]);
-    notify(app, errorDetails(validateError), 'Validation failed', 'error');
-    return;
-end
-
-state.ValidationIssues = issues;
-state.ValidationFolder = folder;
-populateDiagnosticsTable();
-populateSLDDTable();
-validateBtn.Enable = 'on';
-generateBtn.Enable = 'on';
-previewBtn.Enable = 'on';
-
-nErrors = 0;
-nWarnings = 0;
-if ~isempty(issues)
-    nErrors = sum(strcmp({issues.Severity}, 'error'));
-    nWarnings = sum(strcmp({issues.Severity}, 'warning'));
-end
-
-if nErrors > 0
-    validateStatusLabel.Text = sprintf('%d error(s)', nErrors);
-    validateStatusLabel.FontColor = [0.75 0 0];
-elseif nWarnings > 0
-    validateStatusLabel.Text = sprintf('%d warning(s)', nWarnings);
-    validateStatusLabel.FontColor = [0.75 0.55 0];
-else
-    validateStatusLabel.Text = 'OK';
-    validateStatusLabel.FontColor = [0 0.55 0];
-end
-
-setStatus(sprintf('Validation complete: %d issue(s) found.', numel(issues)));
-logTo(log1, sprintf(['Validation complete: %d issue(s) (%d error(s), ', ...
-    '%d warning(s)). See the Diagnostics / SLDD Manager tabs.'], ...
-    numel(issues), nErrors, nWarnings));
-
-if isempty(issues)
-    fixAllBtn.Enable = 'off';
-else
-    hasFixable = any(~strcmp({issues.FixMethod}, 'none'));
-    if hasFixable
-        fixAllBtn.Enable = 'on';
-    else
-        fixAllBtn.Enable = 'off';
-    end
-end
-end
-
-function populateDiagnosticsTable()
-%POPULATEDIAGNOSTICSTABLE Fill the Diagnostics tab table from state.
-
-issues = state.ValidationIssues;
-if isempty(issues)
-    diagTable.Data = {};
-    diagStatusLabel.Text = 'No issues found - ready to build.';
-    diagStatusLabel.FontColor = [0 0.55 0];
-    return;
-end
-
-severities = {issues.Severity};
-nErrors = sum(strcmp(severities, 'error'));
-nWarnings = sum(strcmp(severities, 'warning'));
-nInfo = sum(strcmp(severities, 'info'));
-diagStatusLabel.Text = sprintf('%d error(s), %d warning(s), %d info', ...
-    nErrors, nWarnings, nInfo);
-if nErrors > 0
-    diagStatusLabel.FontColor = [0.75 0 0];
-else
-    diagStatusLabel.FontColor = [0.75 0.55 0];
-end
-
-data = cell(numel(issues), 6);
-for issueIndex = 1:numel(issues)
-    issue = issues(issueIndex);
-    data{issueIndex, 1} = issueIndex;
-    severityTag = upper(issue.Severity);
-    data{issueIndex, 2} = sprintf('%s %s', severityTag, issue.Category);
-    data{issueIndex, 3} = issue.Model;
-    data{issueIndex, 4} = issue.Port;
-    data{issueIndex, 5} = issue.Description;
-    data{issueIndex, 6} = issue.FixMethod;
-end
-diagTable.Data = data;
-end
-
-function populateSLDDTable()
-%POPULATESLDDTABLE Fill the SLDD Manager tab table from state.
-% NOTE: checkSLDDConflicts.m puts the SYMBOL NAME in issue.Model (and
-% leaves issue.Port empty) for SLDD-category issues, so the Symbol
-% column below is read from issue.Model, not issue.Port.
-
-issues = state.ValidationIssues;
-if isempty(issues)
-    slddTable.Data = {};
-    slddStatusLabel.Text = 'SLDD conflicts appear here after validation.';
-    slddStatusLabel.FontColor = [0.5 0.5 0.5];
-    return;
-end
-
-isSldd = strcmp({issues.Category}, 'SLDD');
-slddIssues = issues(isSldd);
-if isempty(slddIssues)
-    slddTable.Data = {};
-    slddStatusLabel.Text = 'No SLDD conflicts found.';
-    slddStatusLabel.FontColor = [0 0.55 0];
-    return;
-end
-
-rows = {};
-for slddIndex = 1:numel(slddIssues)
-    issue = slddIssues(slddIndex);
-    if ~isfield(issue.FixData, 'Definitions')
-        continue;   % e.g. an informational "dictionary could not be read" issue
-    end
-    defs = issue.FixData.Definitions;
-    masterIndex = 1;
-    if isfield(issue.FixData, 'MasterIndex')
-        masterIndex = issue.FixData.MasterIndex;
-    end
-    symbolName = issue.Model;
-    for defIndex = 1:numel(defs)
-        if defIndex == masterIndex
-            status = 'MASTER (authoritative)';
-        else
-            status = 'STALE (needs sync)';
-        end
-        rows(end + 1, :) = {symbolName, defs(defIndex).DictName, ...
-            mat2str(defs(defIndex).Min), mat2str(defs(defIndex).Max), ...
-            status}; %#ok<AGROW>
-    end
-end
-
-if isempty(rows)
-    slddTable.Data = {};
-    slddStatusLabel.Text = 'No SLDD conflicts found.';
-    slddStatusLabel.FontColor = [0 0.55 0];
-else
-    slddStatusLabel.Text = sprintf('%d SLDD conflict(s) found.', numel(slddIssues));
-    slddStatusLabel.FontColor = [0.75 0 0];
-    slddTable.Data = rows;
-end
-end
-
-function onFixMethodChanged(~, event)
-%ONFIXMETHODCHANGED Update the FixMethod of an issue after a table edit.
-
-rowIndex = event.Indices(1);
-colIndex = event.Indices(2);
-if colIndex ~= 6 || rowIndex > numel(state.ValidationIssues)
-    return;
-end
-state.ValidationIssues(rowIndex).FixMethod = char(event.NewData);
-
-hasFixable = any(~strcmp({state.ValidationIssues.FixMethod}, 'none'));
-if hasFixable
-    fixAllBtn.Enable = 'on';
-else
-    fixAllBtn.Enable = 'off';
-end
-end
-
-function doFixAll(~, ~)
-%DOFIXALL Apply the chosen fix for every fixable issue, then re-validate.
-% Delegates to applyFixes.m (which in turn calls fixSampleTime.m and
-% fixSLDDConflict.m for the corresponding fix methods).
-
-issues = state.ValidationIssues;
-if isempty(issues)
-    setStatus('Nothing to fix.');
-    return;
-end
-fixableMask = ~strcmp({issues.FixMethod}, 'none');
-fixable = issues(fixableMask);
-if isempty(fixable)
-    setStatus('No fix method selected for any issue.');
-    return;
-end
-
-folder = state.ValidationFolder;
-if isempty(folder)
-    folder = char(strtrim(modelsFolderEdit.Value));
-end
-if ~isfolder(folder)
-    notify(app, 'Choose a valid models folder first (Browse...).', ...
-        'Missing folder', 'warning');
-    return;
-end
-
-if ~confirmDialog(app, sprintf(['This will modify %d model(s) and/or ', ...
-        'data dictionary entry(ies).\n\nContinue?'], numel(fixable)), ...
-        'Fix All Issues', 'Fix All', 'Cancel')
-    return;
-end
-
-fixAllBtn.Enable = 'off';
-validateBtn.Enable = 'off';
-generateBtn.Enable = 'off';
-previewBtn.Enable = 'off';
-setStatus('Applying fixes...');
-
-p = makeProgress(app, 'Applying fixes');
-try
-    results = applyFixes(issues, folder, ...
-        @(fraction, message) p.set(fraction, message));
-    p.close();
-catch fixError
-    p.close();
-    fixAllBtn.Enable = 'on';
-    validateBtn.Enable = 'on';
-    generateBtn.Enable = 'on';
-    previewBtn.Enable = 'on';
-    setStatus('Fix All Issues failed.');
-    logTo(log1, ['ERROR: ' errorDetails(fixError)]);
-    notify(app, errorDetails(fixError), 'Fix All Issues failed', 'error');
-    return;
-end
-
-lines = cell(numel(results), 1);
-for resultIndex = 1:numel(results)
-    if results(resultIndex).Success
-        lines{resultIndex} = ['  OK: ' results(resultIndex).Message];
-    else
-        lines{resultIndex} = ['  FAILED: ' results(resultIndex).Message];
-    end
-end
-logMany(log1, [{'==== Fix All Issues ===='}, lines(:)']);
-
-nOk = sum([results.Success]);
-nFailed = numel(results) - nOk;
-setStatus(sprintf('Fix All Issues: %d fixed, %d failed. Re-validating...', ...
-    nOk, nFailed));
-
-validateBtn.Enable = 'on';
-generateBtn.Enable = 'on';
-previewBtn.Enable = 'on';
-fixAllBtn.Enable = 'on';
-
-% re-validate to show what (if anything) remains
-doValidate();
-
-notify(app, sprintf(['Fix All Issues finished.\n\n%d fix(es) applied, ', ...
-    '%d failed.\n\nDetails are in the Log tab.'], nOk, nFailed), ...
-    'Fix All Issues', 'info');
 end
 
 function refreshConnections(~, ~)
@@ -1699,8 +1524,6 @@ if isempty(connections)
 end
 
 state.Connections = num2cell(connections);
-% listModelConnections returns ONLY backward connections (bottom->top
-% / right->left) - forward ones never need a Unit Delay.
 delayedMask = cellfun(@(c) isfield(c, 'AlreadyDelayed') && c.AlreadyDelayed, ...
     state.Connections);
 if chkShowAll.Value
@@ -1830,8 +1653,6 @@ try
         struct('BlockSpacing', spacingPoints()));
     topModel = strtok(connection.System, '/');
     save_system(topModel);
-    % open the system that received the delay so the change is visible
-    % (with the main-subsystem wrap, the delay lands inside "model/Core")
     try
         open_system(connection.System);
     catch
@@ -1874,7 +1695,7 @@ else
     portCol = double(signalReport.Port);
     sigCol  = string(signalReport.Signal);
     statCol = string(signalReport.Status);
-
+    
     for rowIndex = 1:height(signalReport)
         reportLines{end + 1} = sprintf('%s %g "%s": %s', ...
             dirCol(rowIndex), ...
@@ -2002,21 +1823,19 @@ elseif ~isfolder(outputFolder)
     return;
 end
 
+% Map UI dropdown options to the Core variables
 infoChoice = infoDropDown.Value;
 switch infoChoice
-    case 'Both'
-        includeMetadata = true;
-        includeComments = true;
-    case 'Source comments'
-        includeMetadata = false;
-        includeComments = true;
-    case 'Metadata only'
+    case 'Header only'
         includeMetadata = true;
         includeComments = false;
-    case 'No comments'
+    case 'Source comments only'
+        includeMetadata = false;
+        includeComments = true;
+    case 'No metadata, no comments'
         includeMetadata = false;
         includeComments = false;
-    otherwise
+    otherwise % 'Header + source comments'
         includeMetadata = true;
         includeComments = true;
 end
@@ -2086,6 +1905,8 @@ catch
 end
 end
 
+end
+
 % =========================================================================
 %  LOCAL FUNCTIONS
 % =========================================================================
@@ -2145,7 +1966,6 @@ names = names(~cellfun('isempty', names));
 names = unique(names, 'stable');
 names = names(:).';
 end
-
 function p = makeProgress(appFigure, title)
 %MAKEPROGRESS Progress dialog with version-safe cancel support.
 
@@ -2214,9 +2034,6 @@ end
 
 function tf = confirmDialog(appFigure, message, title, okLabel, cancelLabel)
 %CONFIRMDIALOG Two-button confirm dialog for any MATLAB release.
-%uiconfirm renamed its options around R2021a ('Buttons'/'DefaultButton'
-%became 'Options'/'DefaultOption'/'CancelOption'), so try the old names,
-%then the new names, then fall back to questdlg, which works everywhere.
 
 tf = false;
 try
@@ -2273,8 +2090,6 @@ end
 
 function details = errorDetails(err)
 %ERRORDETAILS Message plus the full cause chain of an error.
-%Simulink failures often report "Error due to multiple causes." with the
-%real reason hidden in err.cause - this surfaces everything.
 
 details = strtrim(char(err.message));
 if isempty(details)
@@ -2289,8 +2104,6 @@ for groupIndex = 1:numel(err.cause)
         end
     end
 end
-% Simulink messages contain clickable hyperlinks like
-% <a href="matlab:...">name</a> - keep only the visible text.
 details = regexprep(details, '<a[^>]*>\s*([^<]*?)\s*</a>', '$1');
 
 location = errorLocation(err);
@@ -2327,18 +2140,16 @@ end
 
 function enableMultiSelect(listBox)
 %ENABLEMULTISELECT Turn on multi-selection where the release supports it.
-% The documented property name is 'Multiselect' (lowercase s). Dot
-% access is case-sensitive, so a wrong spelling silently disables
-% multi-selection - try several routes and stay quiet when the release
-% has no multi-select list box at all (R2020a).
 
 try
     listBox.Multiselect = 'on';
     return;
+catch
 end
 try
     set(listBox, 'Multiselect', 'on');   % case-insensitive route
     return;
+catch
 end
 try
     listBox.MultiSelect = 'on';          % alternate spelling, just in case
@@ -2377,8 +2188,6 @@ if (numel(in) >= 2 && in(2) == ':') || in(1) == filesep
 else
     out = fullfile(pwd, in);
 end
-% drop trailing file separators and trailing '.' segments
-% ('C:\work\.' -> 'C:\work'), but never touch ordinary names
 while numel(out) > 3
     if out(end) == filesep
         out = out(1:end-1);
@@ -2389,25 +2198,6 @@ while numel(out) > 3
         end
     else
         break;
-    end
-end
-end
-
-function files = slddFilesIn(folder)
-%SLDDFILESIN The .sldd files in a folder with their modification times.
-
-files = struct('Path', {}, 'Modified', {});
-if isfolder(folder)
-    % '**' also finds .sldd files in SUBFOLDERS (e.g. a root folder
-    % the team function uses inside the current folder)
-    listing = dir(fullfile(folder, '**', '*.sldd'));
-    for fileIndex = 1:numel(listing)
-        if ~listing(fileIndex).isdir
-            files(end + 1) = struct( ...
-                'Path', fullfile(listing(fileIndex).folder, ...
-                listing(fileIndex).name), ...
-                'Modified', listing(fileIndex).datenum); %#ok<AGROW>
-        end
     end
 end
 end
@@ -2447,8 +2237,6 @@ end
 
 function logTo(area, message)
 %LOGTO Append one timestamped line to a log area.
-% The same line is echoed to the command window so the session
-% diary (log.txt, started at app launch) records it too.
 
 stamp = char(datetime('now', 'Format', 'HH:mm:ss'));
 text = [stamp, '  ', char(message)];
@@ -2470,8 +2258,6 @@ end
 
 function logMany(area, newLines)
 %LOGMANY Append a block of lines to a log area.
-% The block is echoed to the command window so the session diary
-% (log.txt, started at app launch) records it too.
 
 if isempty(newLines)
     return;
@@ -2498,6 +2284,7 @@ function files = discoverModelFiles(folder)
 %DISCOVERMODELFILES .slx/.mdl files under a folder (recursive).
 
 slxFiles = dir(fullfile(folder, '**', '*.slx'));
+% Exclude the output file itself if it already exists
 mdlFiles = dir(fullfile(folder, '**', '*.mdl'));
 files = [slxFiles; mdlFiles];
 end
@@ -2517,11 +2304,25 @@ else
 end
 end
 
-function lines = renderPlanLines(result)
+function lines = renderPlanLines(result, missingImportedList)
 %RENDERPLANLINES Human-readable preview of the generator plan.
+
+if nargin < 2
+    missingImportedList = {};
+end
 
 lines = {};
 lines{end + 1} = '================ PREVIEW ================';
+
+% Display spreadsheet warnings prominently at the top of preview output
+if ~isempty(missingImportedList)
+    lines{end + 1} = '!!! WARNING: THE FOLLOWING MODELS IMPORTED FROM EXCEL WERE SKIPPED (NOT FOUND) !!!';
+    for mIdx = 1:numel(missingImportedList)
+        lines{end + 1} = sprintf('  - [MISSING] %s', missingImportedList{mIdx});
+    end
+    lines{end + 1} = '-----------------------------------------';
+end
+
 lines{end + 1} = sprintf('Generated model: %s (not created yet)', ...
     result.TargetModel);
 for modelIndex = 1:numel(result.Models)
@@ -2595,7 +2396,7 @@ lines{end + 1} = ['Output: ' result.OutputFile];
 if ~isempty(result.Warnings)
     lines{end + 1} = 'Warnings:';
     for warningIndex = 1:numel(result.Warnings)
-        lines{end + 1} = ['   - ' result.Warnings{warningIndex}];
+        lines{end + 1} = ['   - ' warningIndex];
     end
 end
 end
@@ -2608,5 +2409,3 @@ left = max(1, round((screenSize(3) - width) / 2));
 bottom = max(1, round((screenSize(4) - height) / 2));
 position = [left bottom width height];
 end
-
-end % <--- Properly terminates the teamtools main scope (all internal functions are now nested)
