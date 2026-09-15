@@ -968,7 +968,7 @@ validateStatusLabel.Text = '';
 subsystemLabel.Text = '<no subsystem selected>';
 subsystemLabel.FontColor = [0.75 0 0];
 portDropDown.Value = 'Both';
-infoDropDown.Value = 'Header + source comments';
+infoDropDown.Value = 'Both';
 searchEdit.Value = '';
 destEdit.Value = '';
 chkCase2.Value = true;
@@ -1325,12 +1325,14 @@ logMany(log1, lines);
 state.LastGeneratedModel = result.TargetModel;
 setpref('teamtools', 'GeneratedModel', result.TargetModel);
 connModelEdit.Value = result.TargetModel;
-% Auto-populate Tab 2 destination with full path so Extract works immediately
+
+% Auto-populate Tab 2 destination with absolute path so Extract works immediately
 autoDestFile = fullfile(saveFolder, [modelName '_data.m']);
 destEdit.Value = autoDestFile;
 setpref('teamtools', 'OutputFile', autoDestFile);
 logTo(log1, sprintf(['Extract destination (Tab 2) set to:\n  %s\n', ...
     'Edit it there if you want a different name.'], autoDestFile));
+
 refreshConnections();
 
 if isempty(result.Warnings)
@@ -2084,7 +2086,6 @@ catch
 end
 end
 
-
 % =========================================================================
 %  LOCAL FUNCTIONS
 % =========================================================================
@@ -2358,7 +2359,7 @@ if isempty(v) || isnan(v) || v < minValue
     v = fallback;
 end
 try
-    setpref('teamtools', prefKey, v);
+    setpref('teamtools', 'prefKey', v);
 catch
 end
 end
@@ -2594,7 +2595,7 @@ lines{end + 1} = ['Output: ' result.OutputFile];
 if ~isempty(result.Warnings)
     lines{end + 1} = 'Warnings:';
     for warningIndex = 1:numel(result.Warnings)
-        lines{end + 1} = ['   - ' warningIndex];
+        lines{end + 1} = ['   - ' result.Warnings{warningIndex}];
     end
 end
 end
