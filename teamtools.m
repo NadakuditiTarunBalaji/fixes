@@ -6,17 +6,13 @@ function teamtools
 % Opens a single window with two tabs:
 %   1. Build Parent Model  - generate a parent model from referenced
 %      models (preview first), with a search box that filters the
-%      available-models list, and an optional loop breaker that
-%      inserts a Unit Delay on a chosen BACKWARD connection
-%      (bottom->top / right->left); forward connections are never
-%      listed. The loop breaker is the manual fallback for when
-%      Auto insert Unit Delays is unchecked.
+%      available-models list, Excel model import, compatibility validation,
+%      and an optional loop breaker that inserts a Unit Delay on backward connections.
 %   2. Extract Attributes  - collect attribute records from .m files
 %      using a selected subsystem's port names as search tags.
 %
 % All heavy lifting is done by shared engines (buildParentModelCore.m,
-% extractAttributesCore.m), which are also used by the command-line
-% tools - a fix in one place fixes every front-end.
+% extractAttributesCore.m, validateModelCompatibility.m).
 %
 % Requirements: MATLAB R2020a or newer with Simulink.
 
@@ -51,9 +47,7 @@ catch
     % logging must never keep the app from starting
 end
 
-% remember the session's Simulink cache folder (where .slxc files
-% land - the current folder by default) so Generate can point it at
-% the destination and the app can restore it on close
+% remember the session's Simulink cache folder
 try
     origCacheFolder = char(get_param(0, 'CacheFolder'));
 catch
@@ -117,8 +111,8 @@ g1.RowSpacing = 6;
 g1.ColumnSpacing = 8;
 
 hint1 = uilabel(g1, ...
-    'Text', ['1) Choose the models folder    2) Add models in the order ' ...
-    'they should appear    3) Preview    4) Generate'], ...
+    'Text', ['1) Choose the models folder    2) Add models in order    ' ...
+    '3) Validate compatibility    4) Preview    5) Generate'], ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
 hint1.Layout.Row = 1;
 hint1.Layout.Column = [1 6];
@@ -165,10 +159,11 @@ availableList.Layout.Column = [1 2];
 safeTooltip(availableList, ...
     'Ctrl+click or Shift+click to select several models at once');
 
-btnGrid = uigridlayout(g1, [8 1]); % 8 rows to support Import Excel + ValidatebtnGrid.Layout.Row = 4;
+btnGrid = uigridlayout(g1, [8 1]);
+btnGrid.Layout.Row = 4;
 btnGrid.Layout.Column = 3;
 btnGrid.Padding = [2 2 2 2];
-btnGrid.RowSpacing = 5;
+btnGrid.RowSpacing = 4;
 
 addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', ...
     'FontSize', 11, ...
@@ -179,12 +174,6 @@ addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', ...
 safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
     'when a search filter is active, only the matching models ', ...
     'are added.']);
-validateBtn = uibutton(btnGrid, 'push', 'Text', 'Validate', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @doValidate);
-safeTooltip(validateBtn, ['Creates a temporary parent model, compiles it, ', ...
-    'and detects sample-time conflicts, Outport issues, and data ', ...
-    'dictionary warnings BEFORE you waste time on a full Generate.']);
 
 importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
     'FontSize', 11, ...
@@ -192,14 +181,20 @@ importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
 safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
     'to import an ordered list of models from Column A.']);
 
+validateBtn = uibutton(btnGrid, 'push', 'Text', 'Validate', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @doValidate);
+safeTooltip(validateBtn, ['Checks model referencing compatibility, ', ...
+    'sample times, and Outport configurations before Generate.']);
+
 removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', ...
     'FontSize', 11, ...
     'ButtonPushedFcn', @removeModel);
 clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', ...
     'FontSize', 11, ...
     'ButtonPushedFcn', @clearSelectedModels);
-safeTooltip(clearListBtn, ['Empties the selected-models list (the ordered ', ...
-    'list on the right) only - folders and options stay as they are.']);
+safeTooltip(clearListBtn, ['Empties the selected-models list only - ', ...
+    'folders and options stay as they are.']);
 upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', ...
     'FontSize', 11, ...
     'ButtonPushedFcn', @moveModelUp);
@@ -213,8 +208,6 @@ selectedList.Layout.Column = [4 6];
 safeTooltip(selectedList, ...
     'Ctrl+click or Shift+click to select several models at once');
 
-% multi-selection where the release supports it (graceful fallback to
-% single selection on R2020a, which has no multi-select list box)
 enableMultiSelect(availableList);
 enableMultiSelect(selectedList);
 
@@ -295,10 +288,8 @@ chkColor.Layout.Column = [1 3];
 
 chkAutoDelay = uicheckbox(g1, ...
     'Text', 'Auto Unit Delay on feedback signals', 'Value', true);
-safeTooltip(chkAutoDelay, ['Feedback signals (a bottom model feeding a ', ...
-    'model above it in the list, or a model feeding its own input) get ', ...
-    'a Unit Delay at that model''s INPUT - between the From block and ', ...
-    'the input port - which prevents algebraic loops.']);
+safeTooltip(chkAutoDelay, ['Feedback signals get a Unit Delay at that ', ...
+    'model''s INPUT, which prevents algebraic loops.']);
 chkAutoDelay.Layout.Row = 9;
 chkAutoDelay.Layout.Column = [4 6];
 
@@ -310,13 +301,13 @@ previewBtn.Layout.Column = [2 3];
 
 generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
     'FontSize', 12, ...
-    'FontWeight', 'bold', 'Enable', 'off', 'ButtonPushedFcn', @doGenerate); % Disabled by default
+    'FontWeight', 'bold', 'Enable', 'off', 'ButtonPushedFcn', @doGenerate);
 generateBtn.Layout.Row = 10;
 generateBtn.Layout.Column = [4 5];
 
 lblLoop = uilabel(g1, 'Text', ...
     ['Loop breaker - use when Simulink reports an algebraic loop:  ' ...
-    '1) model name  2) Refresh list  3) pick the looping connection  ' ...
+    '1) model name  2) Refresh list  3) pick connection  ' ...
     '4) Insert Unit Delay'], ...
     'FontWeight', 'bold');
 lblLoop.Layout.Row = 11;
@@ -343,23 +334,15 @@ insertDelayBtn = uibutton(g1, 'push', 'Text', 'Insert Unit Delay', ...
 insertDelayBtn.Layout.Row = 12;
 insertDelayBtn.Layout.Column = 6;
 
-% filter for the connection list: show only connections with a delay
 chkDelayFilter = uicheckbox(g1, ...
     'Text', 'Show only connections that already have a Unit Delay', ...
     'ValueChangedFcn', @refreshConnections);
-safeTooltip(chkDelayFilter, ['Shows only the connections that already contain ', ...
-    'a Unit Delay - handy for checking which feedback signals were ', ...
-    'delayed automatically.']);
 chkDelayFilter.Layout.Row = 13;
 chkDelayFilter.Layout.Column = [1 6];
 
-% second filter: escape hatch to see every connection at once
 chkShowAll = uicheckbox(g1, ...
     'Text', 'Show all connections (with and without Unit Delay)', ...
     'ValueChangedFcn', @refreshConnections);
-safeTooltip(chkShowAll, ['Shows every listed connection, with or without a ', ...
-    'Unit Delay. Default (both unticked): only the connections that ', ...
-    'still NEED a Unit Delay.']);
 chkShowAll.Layout.Row = 14;
 chkShowAll.Layout.Column = [1 6];
 
@@ -372,12 +355,8 @@ configureSignalsBtn = uibutton(g1, 'push', ...
     'Text', 'Configure Signals', ...
     'FontSize', 11, ...
     'ButtonPushedFcn', @doConfigureSignals);
-safeTooltip(configureSignalsBtn, ['Works on the Subsystem block that is ', ...
-    'currently SELECTED in the open model. For every Inport/Outport ', ...
-    'name inside it: creates a Simulink.Signal object (in the data ', ...
-    'dictionary when one is attached, otherwise the model workspace), ', ...
-    'names the connecting lines, enables MustResolveToSignalObject, ', ...
-    'and shows propagated signal names.']);
+safeTooltip(configureSignalsBtn, ['Creates Simulink.Signal objects for ', ...
+    'Inports/Outports of the selected subsystem block.']);
 configureSignalsBtn.Layout.Row = 15;
 configureSignalsBtn.Layout.Column = [3 4];
 
@@ -387,27 +366,19 @@ lblSignalsHint = uilabel(g1, ...
 lblSignalsHint.Layout.Row = 15;
 lblSignalsHint.Layout.Column = [5 6];
 
-% Configure Signals: which parts to process
 chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
-safeTooltip(chkCfgInports, ['Process the Subsystem''s Inport signals: ', ...
-    'create/validate Simulink.Signal objects and name the lines.']);
 chkCfgInports.Layout.Row = 16;
 chkCfgInports.Layout.Column = [1 2];
 
 chkCfgOutports = uicheckbox(g1, 'Text', 'Outports', 'Value', true);
-safeTooltip(chkCfgOutports, ['Process the Subsystem''s Outport signals: ', ...
-    'create/validate Simulink.Signal objects and name the lines.']);
 chkCfgOutports.Layout.Row = 16;
 chkCfgOutports.Layout.Column = [3 4];
 
 chkCfgPropagation = uicheckbox(g1, 'Text', 'Propagation', 'Value', true);
-safeTooltip(chkCfgPropagation, 'Display the propagated signal names on the lines.');
 chkCfgPropagation.Layout.Row = 16;
 chkCfgPropagation.Layout.Column = 5;
 
 chkCfgResolver = uicheckbox(g1, 'Text', 'Resolver', 'Value', true);
-safeTooltip(chkCfgResolver, ['Enable "Signal name must resolve to signal ', ...
-    'object" (MustResolveToSignalObject) on the named lines.']);
 chkCfgResolver.Layout.Row = 16;
 chkCfgResolver.Layout.Column = 6;
 
@@ -461,7 +432,6 @@ lblInfo = uilabel(g2, 'Text', 'File information:', 'FontWeight', 'bold');
 lblInfo.Layout.Row = 3;
 lblInfo.Layout.Column = 4;
 
-% Added 'No metadata, no comments' choice as the 4th option
 infoDropDown = uidropdown(g2, ...
     'Items', {'Header + source comments', 'Header only', 'Source comments only', 'No metadata, no comments'}, ...
     'Value', 'Header + source comments');
@@ -552,7 +522,6 @@ drawnow limitrate;
 end
 
 function bringAppToFront()
-%BRINGAPPTOFRONT Raise the app window after a native file dialog.
 try
     drawnow;
     figure(app);
@@ -565,14 +534,11 @@ end
 end
 
 function invalidatePreview()
-%INVALIDATEPREVIEW Reset generate availability whenever settings/inputs change.
 previewBtn.Enable = 'on';
 generateBtn.Enable = 'off';
 end
 
 function onAppClose(~, ~)
-%ONAPPCLOSE Stop the log.txt diary, then close the window.
-
 try
     fprintf(['=== Simulink Team Tools - session log closed %s ', ...
         '===\n'], char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
@@ -581,7 +547,7 @@ end
 try
     diary('off');
     if prevDiaryOn
-        diary(prevDiaryFile);   % the user ran their own diary
+        diary(prevDiaryFile);
     end
 catch
 end
@@ -608,7 +574,6 @@ setpref('teamtools', 'ModelsFolder', chosenFolder);
 if isempty(strtrim(saveFolderEdit.Value))
     saveFolderEdit.Value = chosenFolder;
 end
-% Clear any previously imported missing models cache when switching folder
 state.LastImportedMissing = {};
 invalidatePreview();
 refreshModelList();
@@ -677,16 +642,11 @@ end
 end
 
 function updateAvailableLabels()
-%UPDATEAVAILABLELABELS Refresh the left list: apply the search filter
-% and mark models that are already in the selected list.
-
 baseLabels = state.AvailableLabels;
 if isempty(baseLabels)
     return;
 end
 
-% search filter: keep the models whose label (name + subfolder)
-% contains the typed text, case-insensitively
 query = lower(strtrim(state.AvailableFilter));
 if isempty(query)
     visibleMask = true(numel(baseLabels), 1);
@@ -709,12 +669,11 @@ for labelIndex = 1:numel(baseLabels)
 end
 
 if isequal(availableList.Items, marked)
-    return;   % nothing changed - avoid unnecessary updates
+    return;
 end
 
 wasChar = ischar(availableList.Value);
 currentSelection = asCell(availableList.Value);
-% strip the marker before matching against the base labels
 currentBase = strrep(currentSelection, '  [added]', '');
 selectedPositions = find(ismember(baseLabels, currentBase));
 
@@ -730,8 +689,6 @@ end
 end
 
 function onAvailableFilterChanged(src, ~)
-%ONAVAILABLEFILTERCHANGED Filter the available list (Enter/focus loss).
-
 state.AvailableFilter = char(strtrim(src.Value));
 if isempty(state.AvailableNames)
     return;
@@ -761,21 +718,15 @@ addModelsByLabel(selectedLabels);
 end
 
 function addAllModels(~, ~)
-%ADDALLMODELS Add every model shown in the available list. When a
-% search filter is active, only the matching models are added.
 addModelsByLabel(availableList.Items);
 end
 
 function addModelsByLabel(labelsToAdd)
-%ADDMODELSBYLABEL Add the models behind these labels, in listed order.
-
 if isempty(state.AvailableNames)
     setStatus('No models available - choose a models folder first.');
     return;
 end
 
-% match labels against the FULL available list (not the visible list
-% box), so adding keeps working while a search filter is active
 newNames = {};
 skippedCount = 0;
 for availIndex = 1:numel(state.AvailableLabels)
@@ -809,7 +760,6 @@ wasChar = ischar(selectedList.Value);
 selectedList.Items = [selectedList.Items, newNames];
 setListSelection(selectedList, newNames, wasChar);
 
-% Invalidate preview layout as the selection changed
 invalidatePreview();
 updateAvailableLabels();
 
@@ -822,9 +772,6 @@ setStatus(message);
 end
 
 function importFromExcel(~, ~)
-%IMPORTFROMEXCEL Upload an Excel/CSV spreadsheet to populate Selected list.
-
-% 1. Require models folder to be selected
 folder = char(strtrim(modelsFolderEdit.Value));
 if ~isfolder(folder) || isempty(state.AvailableNames)
     notify(app, 'Please choose a valid models folder first to match imported models.', ...
@@ -832,7 +779,6 @@ if ~isfolder(folder) || isempty(state.AvailableNames)
     return;
 end
 
-% 2. Warn user if the current selected list is non-empty (Option a: Cleared first)
 if ~isempty(selectedList.Items)
     proceed = confirmDialog(app, ...
         sprintf(['Warning: Previously added/selected models (%d items) will be cleared.\n\n', ...
@@ -844,7 +790,6 @@ if ~isempty(selectedList.Items)
     end
 end
 
-% 3. Open File Dialog
 [fileName, filePath] = uigetfile(...
     {'*.xlsx;*.xlsm;*.xls;*.csv', 'Excel and CSV Sheets (*.xlsx, *.xlsm, *.xls, *.csv)'}, ...
     'Select Excel/CSV Sheet');
@@ -869,7 +814,6 @@ if isempty(data)
     return;
 end
 
-% 4. Parse Column A
 colA = data(:, 1);
 rawNames = {};
 for r = 1:numel(colA)
@@ -893,7 +837,6 @@ if isempty(rawNames)
     return;
 end
 
-% 5. Handle Duplicates: Keep only first occurrence, highlight skipped duplicates in Red
 cleanNames = {};
 duplicates = {};
 for idx = 1:numel(rawNames)
@@ -908,18 +851,15 @@ for idx = 1:numel(rawNames)
 end
 
 if ~isempty(duplicates)
-    % Print RED color trace to standard Command Window stream
     fprintf(2, '!!! EXCEL IMPORT WARNING: Duplicate models skipped: %s\n', strjoin(duplicates, ', '));
     logTo(log1, ['!!! DUPLICATE WARNING: Skipped duplicate rows for: ' strjoin(duplicates, ', ')]);
 end
 
-% 6. Validate parsed names against Available Models
 validModels = {};
 missingModels = {};
 
 for idx = 1:numel(cleanNames)
     targetName = cleanNames{idx};
-    % Match case-sensitively or fallback case-insensitively to secure exact Available name
     matchIdx = find(strcmpi(state.AvailableNames, targetName), 1);
     if ~isempty(matchIdx)
         validModels{end + 1} = state.AvailableNames{matchIdx}; %#ok<AGROW>
@@ -928,7 +868,6 @@ for idx = 1:numel(cleanNames)
     end
 end
 
-% 7. Handle missing models: prompt user
 if ~isempty(missingModels)
     missingStr = strjoin(missingModels, '\n  - ');
     msg = sprintf(['The following models from the sheet were NOT found in the models folder:\n\n  - %s\n\n', ...
@@ -948,17 +887,13 @@ if isempty(validModels)
     return;
 end
 
-% 8. Overwrite selected models with exact validated order
 selectedList.Items = validModels;
 try
     selectedList.Value = validModels{1};
 catch
 end
 
-% Maintain missing items context for display in Preview
 state.LastImportedMissing = missingModels;
-
-% Invalidate preview layout as the selection changed
 invalidatePreview();
 updateAvailableLabels();
 
@@ -971,8 +906,6 @@ logTo(log1, importedMsg);
 end
 
 function doValidate(~, ~)
-%DOVALIDATE Run model compatibility checks before Preview/Generate.
-
 folder = char(strtrim(modelsFolderEdit.Value));
 if ~isfolder(folder)
     notify(app, 'Choose a valid models folder first.', ...
@@ -1002,7 +935,6 @@ catch valErr
 end
 validateBtn.Enable = 'on';
 
-% Display results in the log
 logTo(log1, '========== VALIDATION REPORT ==========');
 logTo(log1, sprintf('Models checked: %d | Skipped: %d', ...
     report.ModelsChecked, report.ModelsSkipped));
@@ -1042,12 +974,8 @@ else
             errorCount));
         notify(app, sprintf(['Validation found %d error(s) and %d warning(s).\n\n', ...
             'Recommended FixedStep: %s\n\n', ...
-            'See the log for detailed fix instructions.\n\n', ...
-            'Common fix: After Generate, open the parent model and run:\n', ...
-            '  set_param(gcs, ''FixedStep'', ''%s'')\n', ...
-            'Or use a variable-step solver.'], ...
-            errorCount, warnCount, report.RecommendedStep, ...
-            report.RecommendedStep), ...
+            'See the log for detailed fix instructions.'], ...
+            errorCount, warnCount, report.RecommendedStep), ...
             'Validation Issues Found', 'warning');
     else
         setStatus(sprintf('Validation found %d warning(s) - see log.', warnCount));
@@ -1082,15 +1010,13 @@ setStatus(sprintf('Removed %d model(s).', removedCount));
 end
 
 function clearSelectedModels(~, ~)
-%CLEARSELECTEDMODELS Empty the selected-models list only (Clear button).
-
 if isempty(selectedList.Items)
     setStatus('The selected list is already empty.');
     return;
 end
 removedCount = numel(selectedList.Items);
 selectedList.Items = {};
-state.LastImportedMissing = {}; % reset spreadsheet warnings
+state.LastImportedMissing = {};
 invalidatePreview();
 updateAvailableLabels();
 setStatus(sprintf('Cleared %d model(s) from the selected list.', ...
@@ -1098,15 +1024,12 @@ setStatus(sprintf('Cleared %d model(s) from the selected list.', ...
 end
 
 function clearAllData(~, ~)
-%CLEARALLDATA Reset every input on all tabs in one click (Clear All).
-
-% --- Tab 1: model selection and generation options
 filterEdit.Value = '';
 state.AvailableFilter = '';
 state.AvailableNames = {};
 state.AvailableLabels = {};
 selectedList.Items = {};
-state.LastImportedMissing = {}; % clear spreadsheet warnings
+state.LastImportedMissing = {};
 updateAvailableLabels();
 modelsFolderEdit.Value = '';
 availableList.Items = {};
@@ -1125,11 +1048,10 @@ layoutDrop.Value = 'Horizontal (side by side)';
 chkColor.Value = true;
 chkAutoDelay.Value = true;
 
-% --- Reset Preview and Generate button visibility states
 previewBtn.Enable = 'on';
 generateBtn.Enable = 'off';
+validateBtn.Enable = 'on';
 
-% --- Tab 1: loop breaker
 connModelEdit.Value = '';
 chkDelayFilter.Value = false;
 chkShowAll.Value = false;
@@ -1141,13 +1063,11 @@ try
 catch
 end
 insertDelayBtn.Enable = 'off';
-validateBtn.Enable = 'on';
 chkCfgInports.Value = true;
 chkCfgOutports.Value = true;
 chkCfgPropagation.Value = true;
 chkCfgResolver.Value = true;
 
-% --- Tab 2: extract attributes
 subsystemLabel.Text = '<no subsystem selected>';
 subsystemLabel.FontColor = [0.75 0 0];
 portDropDown.Value = 'Both';
@@ -1177,9 +1097,6 @@ moveModel(1);
 end
 
 function moveModel(direction)
-%MOVEMODEL Move every selected model one position up (-1) or down (+1).
-% Works for a single selection and for multiple selections.
-
 if isempty(selectedList.Items)
     setStatus('The selected list is empty.');
     return;
@@ -1195,9 +1112,9 @@ selectedMask = ismember(items, selectedValues);
 wasChar = ischar(selectedList.Value);
 
 if direction < 0
-    scanOrder = 1:numel(items);        % moving up: work top to bottom
+    scanOrder = 1:numel(items);
 else
-    scanOrder = numel(items):-1:1;     % moving down: work bottom to top
+    scanOrder = numel(items):-1:1;
 end
 
 for k = scanOrder
@@ -1209,7 +1126,7 @@ for k = scanOrder
         continue;
     end
     if selectedMask(targetIndex)
-        continue;   % part of the same block - already handled by a neighbour
+        continue;
     end
     tmp = items{k};
     items{k} = items{targetIndex};
@@ -1221,8 +1138,6 @@ end
 
 selectedList.Items = items;
 setListSelection(selectedList, selectedValues, wasChar);
-
-% Reordering shifts models and invalidates the cached preview setup
 invalidatePreview();
 end
 
@@ -1246,8 +1161,6 @@ setpref('teamtools', 'SaveFolder', chosenFolder);
 end
 
 function s = integrationStyle()
-%INTEGRATIONSTYLE Read the integration-style controls into option fields.
-
 s = struct();
 if strcmp(connMethodDrop.Value, 'Direct lines')
     s.ConnectionMethod = 'lines';
@@ -1263,7 +1176,6 @@ s.ColorBlocks = logical(chkColor.Value);
 s.AutoDelayFeedback = logical(chkAutoDelay.Value);
 s.BlockSpacing = spacingPoints();
 
-% Standard spacing variables calculated using Golden Proportions
 spacingGapValues = spacingGaps();
 s.FromModelGap = spacingGapValues.FromModelGap;
 s.ModelGotoGap = spacingGapValues.ModelGotoGap;
@@ -1272,18 +1184,16 @@ s.ModelToModelGap = spacingGapValues.ModelToModelGap;
 end
 
 function spacing = spacingPoints()
-%SPACINGPOINTS Returns the standard spacing base value of 100 pt.
 spacing = 100;
 end
 
 function gaps = spacingGaps()
-%SPACINGGAPS Calculates all alignment gaps proportionally from the 100 pt base.
     baseVal = spacingPoints();
     gaps = struct( ...
-        'FromModelGap',   baseVal, ...                % 100% of base (100 pt)
-        'ModelGotoGap',   baseVal, ...                % 100% of base (100 pt)
-        'FromToDelayGap', round(baseVal * 0.40), ...  % 40% of base (40 pt)
-        'ModelToModelGap', round(baseVal * 4.00));    % 400% of base (400 pt)
+        'FromModelGap',   baseVal, ...
+        'ModelGotoGap',   baseVal, ...
+        'FromToDelayGap', round(baseVal * 0.40), ...
+        'ModelToModelGap', round(baseVal * 4.00));
 end
 
 function [folder, models, modelName, saveFolder] = validateTab1()
@@ -1365,21 +1275,17 @@ catch previewError
     setStatus('Preview failed.');
     logTo(log1, ['ERROR: ' errText]);
 
-    % Auto-detect sample-time errors and suggest validation
     if contains(errText, 'fixed-step size') || ...
        contains(errText, 'sample time') || ...
        contains(errText, 'integer multiple')
         logTo(log1, '');
         logTo(log1, '>>> SAMPLE-TIME ERROR DETECTED <<<');
-        logTo(log1, 'Click the "Validate" button to get a detailed');
-        logTo(log1, 'diagnostic report with fix suggestions.');
+        logTo(log1, 'Click the "Validate" button to diagnose compatibility.');
         logTo(log1, '');
         notify(app, sprintf(['Preview failed with a sample-time error:\n\n', ...
             '%s\n\n', ...
             'Click the "Validate" button in the model list panel ', ...
-            'to get a detailed report with fix suggestions.\n\n', ...
-            'Quick fix: After Generate, open the parent model and run:\n', ...
-            '  set_param(gcs, ''Solver'', ''ode45'')'], errText), ...
+            'to get a detailed report with fix suggestions.'], errText), ...
             'Sample-Time Error - Run Validate', 'error');
     else
         notify(app, errText, 'Preview failed', 'error');
@@ -1387,11 +1293,9 @@ catch previewError
     return;
 end
 
-% PREVIEW SUCCESS: Lock Preview, Enable ONLY Generate button
 previewBtn.Enable = 'off';
 generateBtn.Enable = 'on';
 
-% Pass skipped missing context explicitly to formatting engine
 logMany(log1, renderPlanLines(result, state.LastImportedMissing));
 setStatus('Preview complete - review it above, then press Generate.');
 
@@ -1452,10 +1356,6 @@ options = struct( ...
     'ModelToModelGap',      styleOpts.ModelToModelGap, ...
     'ConfigParameters',     {{'UseDivisionForNetSlopeComputation'}});
 
-% point the session's Simulink cache folder at the destination, so
-% the .slxc cache files of the generated model AND the referenced
-% models land there instead of the folder MATLAB was started in;
-% the previous setting is restored when the app closes
 try
     if cacheFolderWritable(saveFolder)
         set_param(0, 'CacheFolder', absFolder(saveFolder));
@@ -1490,14 +1390,11 @@ catch generateError
        contains(errText, 'integer multiple')
         logTo(log1, '');
         logTo(log1, '>>> SAMPLE-TIME ERROR DETECTED <<<');
-        logTo(log1, 'Click "Validate" for a detailed diagnostic report.');
+        logTo(log1, 'Click the "Validate" button to diagnose compatibility.');
         logTo(log1, '');
         notify(app, sprintf(['Generation failed with a sample-time error:\n\n', ...
             '%s\n\n', ...
-            'Click the "Validate" button to diagnose the issue.\n\n', ...
-            'Quick fix: Generate with Preview first, then open the ', ...
-            'parent model and change the solver:\n', ...
-            '  set_param(''YourModel'', ''FixedStep'', ''0.001'')'], errText), ...
+            'Click the "Validate" button to diagnose the issue.'], errText), ...
             'Sample-Time Error - Run Validate', 'error');
     else
         notify(app, errText, 'Generation failed', 'error');
@@ -1505,7 +1402,6 @@ catch generateError
     return;
 end
 
-% Generation completed successfully: Reset buttons back to default state
 invalidatePreview();
 
 if result.Cancelled
@@ -1581,17 +1477,8 @@ if isempty(result.Warnings)
         'Generation complete', 'success');
 else
     setStatus('Model generated with warnings - see the log above.');
-    if ~isempty(regexpi(strjoin(result.Warnings, char(10)), ...
-            'could not update the diagram'))
-        extraText = ['Simulink could not update the diagram (see the ', ...
-            'log). Break a remaining algebraic loop in the Loop ', ...
-            'breaker tab: Refresh list, pick the looping connection, ', ...
-            'press Insert Unit Delay.'];
-    else
-        extraText = 'Read the warnings in the log above.';
-    end
-    notify(app, sprintf('Model generated with %d warning(s):\n\n%s\n\n%s', ...
-        numel(result.Warnings), result.OutputFile, extraText), ...
+    notify(app, sprintf('Model generated with %d warning(s):\n\n%s', ...
+        numel(result.Warnings), result.OutputFile), ...
         'Generation complete - check warnings', 'warning');
 end
 end
@@ -1606,8 +1493,7 @@ if isempty(modelName)
     return;
 end
 if ~isvarname(modelName)
-    setStatus(sprintf(['"%s" is not a valid model name. Use the model name ', ...
-        'only, e.g. "testtcs" - no spaces, dots, or slashes.'], modelName));
+    setStatus(sprintf(['"%s" is not a valid model name.'], modelName));
     return;
 end
 if ~bdIsLoaded(modelName)
@@ -1638,19 +1524,13 @@ if isempty(connections)
     insertDelayBtn.Enable = 'off';
     setStatus('No backward connections found in this model.');
     logTo(log1, sprintf(['No backward connections found in "%s" ', ...
-        '(only bottom->top / right->left ones are listed; direct ', ...
-        'lines and From/Goto links are both detected).\n', ...
+        '(only bottom->top / right->left ones are listed).\n', ...
         'Diagnostics: %d block(s) in diagram, %d model-reference ', ...
         'block(s), %d connected model output(s), %d Goto block(s), ', ...
-        '%d From block(s), %d Unit Delay block(s), %d ambiguous ', ...
-        'From/Goto tag(s).\n', ...
-        'If this is NOT the generated parent model (its name, e.g. ', ...
-        '"testtcs", was filled in automatically after Generate), type ', ...
-        'the parent model name and press Refresh list again.'], ...
+        '%d From block(s), %d Unit Delay block(s).'], ...
         modelName, connStats.BlocksScanned, connStats.ModelBlocks, ...
         connStats.ConnectedOutputs, connStats.GotoBlocks, ...
-        connStats.FromBlocks, connStats.UnitDelayBlocks, ...
-        connStats.AmbiguousTags));
+        connStats.FromBlocks, connStats.UnitDelayBlocks));
     return;
 end
 
@@ -1682,14 +1562,8 @@ if isempty(shownConnections)
     insertDelayBtn.Enable = 'off';
     if strcmp(filterMode, 'withdelay')
         setStatus('No connections with a Unit Delay (filter is on).');
-        logTo(log1, sprintf(['Listed %d connection(s) in "%s" - none of ', ...
-            'them has a Unit Delay yet (filter is on).'], ...
-            numel(connections), modelName));
     else
         setStatus('Nothing to do: every backward connection already has a Unit Delay.');
-        logTo(log1, sprintf(['All %d backward connection(s) in "%s" ', ...
-            'already have a Unit Delay.'], ...
-            numel(connections), modelName));
     end
     return;
 end
@@ -1698,41 +1572,17 @@ try
     connDropDown.Items = labels;
     connDropDown.Value = labels{1};
 catch
-    try
-        connDropDown.Value = labels{1};
-        connDropDown.Items = labels;
-    catch uiError
-        logTo(log1, ['ERROR: could not update the connection dropdown: ' ...
-            errorDetails(uiError)]);
-        notify(app, errorDetails(uiError), ...
-            'Could not show the connection list', 'error');
-        return;
-    end
+    connDropDown.Value = labels{1};
+    connDropDown.Items = labels;
 end
 insertDelayBtn.Enable = 'on';
-delayedCount = sum(delayedMask);
 switch filterMode
     case 'all'
-        setStatus(sprintf('%d connection(s) listed (all) - pick one.', ...
-            numel(labels)));
-        logTo(log1, sprintf(['Listed %d connection(s) in "%s" (all; ', ...
-            'model blocks: %d, From/Goto links: %d, already delayed: ', ...
-            '%d).'], numel(labels), modelName, connStats.ModelBlocks, ...
-            connStats.FromGotoConnections, delayedCount));
+        setStatus(sprintf('%d connection(s) listed (all) - pick one.', numel(labels)));
     case 'withdelay'
-        setStatus(sprintf(['%d of %d connection(s) shown ', ...
-            '(with Unit Delay) - pick one.'], numel(labels), ...
-            numel(state.Connections)));
-        logTo(log1, sprintf(['Listed %d of %d connection(s) in "%s" ', ...
-            '(with Unit Delay).'], numel(labels), ...
-            numel(state.Connections), modelName));
+        setStatus(sprintf('%d connection(s) shown (with Unit Delay).', numel(labels)));
     otherwise
-        setStatus(sprintf(['%d of %d connection(s) need a ', ...
-            'Unit Delay - pick one.'], numel(labels), ...
-            numel(state.Connections)));
-        logTo(log1, sprintf(['Listed %d of %d connection(s) in "%s" ', ...
-            '(only those still needing a Unit Delay).'], ...
-            numel(state.Connections), modelName));
+        setStatus(sprintf('%d connection(s) need a Unit Delay.', numel(labels)));
 end
 end
 
@@ -1756,19 +1606,12 @@ end
 connection = state.Connections{selIndex};
 
 if isfield(connection, 'Kind') && strcmp(connection.Kind, 'fromgoto')
-    kindNote = sprintf(['This is a From/Goto connection: the delay is ', ...
-        'placed at the destination model''s input (inport level), ', ...
-        'right after the From block of tag "%s" - only this branch ', ...
-        'is delayed.'], connection.Tag);
+    kindNote = sprintf(['From/Goto connection: delay is placed at ', ...
+        'destination model input after From tag "%s".'], connection.Tag);
 else
-    kindNote = ['The delay is placed at the destination model''s ', ...
-        'input (inport level), in line with that input port.'];
+    kindNote = 'Delay is placed at destination model input port.';
 end
-if isfield(connection, 'AlreadyDelayed') && connection.AlreadyDelayed
-    kindNote = [kindNote, newline, 'CAUTION: this path already contains ', ...
-        'a Unit Delay (inserted automatically). Adding another one here ', ...
-        'makes the total delay twice as long (z^-2).'];
-end
+
 answer = confirmDialog(app, ...
     sprintf(['Insert a Unit Delay on this connection?\n\n%s\n\n%s'], ...
     connection.Label, kindNote), ...
@@ -1788,13 +1631,9 @@ try
         open_system(connection.System);
     catch
     end
-    whereText = '';
-    if ~strcmp(connection.System, topModel)
-        whereText = sprintf(' inside subsystem "%s"', connection.System);
-    end
     logTo(log1, result.Message);
-    notify(app, sprintf(['%s\n\nThe model has been saved%s.'], ...
-        result.Message, whereText), 'Unit Delay inserted', 'success');
+    notify(app, sprintf('%s\n\nThe model has been saved.', result.Message), ...
+        'Unit Delay inserted', 'success');
     refreshConnections();
 catch delayError
     logTo(log1, ['ERROR: ' errorDetails(delayError)]);
@@ -1803,8 +1642,6 @@ end
 end
 
 function doConfigureSignals(~, ~)
-%DOCONFIGURESIGNALS Configure the selected Subsystem's signal objects.
-
 try
     signalReport = configureSubsystemSignals(struct( ...
         'ProcessInports',  logical(chkCfgInports.Value), ...
@@ -1844,8 +1681,7 @@ end
 logMany(log1, reportLines);
 setStatus('Subsystem signals configured - see the log above.');
 notify(app, ['Subsystem signal configuration finished.\n\n', ...
-    'The summary is in the log above; the full per-port report is in ', ...
-    'the Command Window.'], 'Configure signals', 'info');
+    'The summary is in the log above.'], 'Configure signals', 'info');
 end
 
 % =========================================================================
@@ -1954,7 +1790,6 @@ elseif ~isfolder(outputFolder)
     return;
 end
 
-% Map UI dropdown options to the Core variables
 infoChoice = infoDropDown.Value;
 switch infoChoice
     case 'Header only'
@@ -1966,7 +1801,7 @@ switch infoChoice
     case 'No metadata, no comments'
         includeMetadata = false;
         includeComments = false;
-    otherwise % 'Header + source comments'
+    otherwise
         includeMetadata = true;
         includeComments = true;
 end
@@ -2009,8 +1844,7 @@ openFolderBtn.Enable = 'on';
 logMany(log2, renderExtractSummary(result));
 setStatus('Extraction complete.');
 notify(app, sprintf(['Extraction complete.\n\nFiles read: %d\n', ...
-    'Unique records: %d\n\nOutput:\n%s\n\nCheck the log for ', ...
-    'per-tag counts.'], result.FilesRead, result.UniqueMatches, ...
+    'Unique records: %d\n\nOutput:\n%s'], result.FilesRead, result.UniqueMatches, ...
     result.OutputFile), 'Extraction complete', 'success');
 end
 
@@ -2042,8 +1876,6 @@ end
 %  LOCAL FUNCTIONS
 % =========================================================================
 function ports = getSubsystemPorts(subsystemHandle)
-%GETSUBSYSTEMPORTS Immediate Inport/Outport names of a Simulink subsystem.
-
 if nargin < 1 || isempty(subsystemHandle)
     subsystemHandle = gcbh;
 end
@@ -2097,9 +1929,8 @@ names = names(~cellfun('isempty', names));
 names = unique(names, 'stable');
 names = names(:).';
 end
-function p = makeProgress(appFigure, title)
-%MAKEPROGRESS Progress dialog with version-safe cancel support.
 
+function p = makeProgress(appFigure, title)
 cancelable = true;
 try
     dialogHandle = uiprogressdlg(appFigure, 'Title', title, ...
@@ -2141,8 +1972,6 @@ end
 end
 
 function notify(appFigure, message, title, icon)
-%NOTIFY Alert dialog with graceful fallbacks on older releases.
-
 try
     uialert(appFigure, char(message), title, 'Icon', icon);
 catch
@@ -2155,8 +1984,6 @@ end
 end
 
 function safeTooltip(component, text)
-%SAFETOOLTIP Set a tooltip when the release supports it.
-
 try
     component.Tooltip = char(text);
 catch
@@ -2164,8 +1991,6 @@ end
 end
 
 function tf = confirmDialog(appFigure, message, title, okLabel, cancelLabel)
-%CONFIRMDIALOG Two-button confirm dialog for any MATLAB release.
-
 tf = false;
 try
     tf = dialogChoice(uiconfirm(appFigure, char(message), char(title), ...
@@ -2195,8 +2020,6 @@ end
 end
 
 function tf = dialogChoice(answer, okLabel)
-%DIALOGCHOICE Extract the pressed button from a uiconfirm response.
-
 if isstruct(answer) && isfield(answer, 'SelectedButton')
     tf = strcmp(char(answer.SelectedButton), char(okLabel));
 elseif ischar(answer)
@@ -2207,8 +2030,6 @@ end
 end
 
 function location = errorLocation(err)
-%ERRORLOCATION Short "function, line N" description of an error's origin.
-
 location = '';
 try
     if isstruct(err) && isfield(err, 'stack') && ~isempty(err.stack)
@@ -2220,8 +2041,6 @@ end
 end
 
 function details = errorDetails(err)
-%ERRORDETAILS Message plus the full cause chain of an error.
-
 details = strtrim(char(err.message));
 if isempty(details)
     details = '(no message)';
@@ -2258,8 +2077,6 @@ end
 end
 
 function values = asCell(value)
-%ASCELL Listbox Value as a row cell array (handles single and multi mode).
-
 if isempty(value)
     values = {};
 elseif ischar(value)
@@ -2270,45 +2087,23 @@ end
 end
 
 function enableMultiSelect(listBox)
-%ENABLEMULTISELECT Turn on multi-selection where the release supports it.
-
 try
     listBox.Multiselect = 'on';
     return;
 catch
 end
 try
-    set(listBox, 'Multiselect', 'on');   % case-insensitive route
+    set(listBox, 'Multiselect', 'on');
     return;
 catch
 end
 try
-    listBox.MultiSelect = 'on';          % alternate spelling, just in case
-catch
-end
-end
-
-function v = gapValue(editField, fallback, prefKey, minValue)
-%GAPVALUE Read one spacing field: fallback when empty, minimum kept,
-% and the value is remembered in the preferences.
-
-try
-    v = round(double(editField.Value));
-catch
-    v = fallback;
-end
-if isempty(v) || isnan(v) || v < minValue
-    v = fallback;
-end
-try
-    setpref('teamtools', 'prefKey', v);
+    listBox.MultiSelect = 'on';
 catch
 end
 end
 
 function out = absFolder(in)
-%ABSFOLDER Absolute, tidied version of a folder path (for compare).
-
 in = char(strtrim(in));
 if isempty(in)
     out = pwd;
@@ -2334,8 +2129,6 @@ end
 end
 
 function tf = cacheFolderWritable(folder)
-%CACHEFOLDERWRITABLE True when files can be created in the folder.
-
 tf = false;
 try
     probeFile = fullfile(folder, 'teamtools_probe.tmp');
@@ -2350,8 +2143,6 @@ end
 end
 
 function setListSelection(list, values, wasChar)
-%SETLISTSELECTION Set a list selection safely in single- or multi-select mode.
-
 if isempty(values)
     return;
 end
@@ -2367,8 +2158,6 @@ end
 end
 
 function logTo(area, message)
-%LOGTO Append one timestamped line to a log area.
-
 stamp = char(datetime('now', 'Format', 'HH:mm:ss'));
 text = [stamp, '  ', char(message)];
 try
@@ -2388,8 +2177,6 @@ drawnow limitrate;
 end
 
 function logMany(area, newLines)
-%LOGMANY Append a block of lines to a log area.
-
 if isempty(newLines)
     return;
 end
@@ -2412,17 +2199,12 @@ drawnow limitrate;
 end
 
 function files = discoverModelFiles(folder)
-%DISCOVERMODELFILES .slx/.mdl files under a folder (recursive).
-
 slxFiles = dir(fullfile(folder, '**', '*.slx'));
-% Exclude the output file itself if it already exists
 mdlFiles = dir(fullfile(folder, '**', '*.mdl'));
 files = [slxFiles; mdlFiles];
 end
 
 function relativePart = relativePart(fullPath, rootFolder)
-%RELATIVEPART Subfolder part of fullPath relative to rootFolder ('' if none).
-
 rootWithSeparator = [char(rootFolder) filesep];
 if strncmpi(fullPath, rootWithSeparator, numel(rootWithSeparator))
     relativePart = fullPath(numel(rootWithSeparator) + 1:end);
@@ -2436,8 +2218,6 @@ end
 end
 
 function lines = renderPlanLines(result, missingImportedList)
-%RENDERPLANLINES Human-readable preview of the generator plan.
-
 if nargin < 2
     missingImportedList = {};
 end
@@ -2445,7 +2225,6 @@ end
 lines = {};
 lines{end + 1} = '================ PREVIEW ================';
 
-% Display spreadsheet warnings prominently at the top of preview output
 if ~isempty(missingImportedList)
     lines{end + 1} = '!!! WARNING: THE FOLLOWING MODELS IMPORTED FROM EXCEL WERE SKIPPED (NOT FOUND) !!!';
     for mIdx = 1:numel(missingImportedList)
@@ -2507,8 +2286,6 @@ lines{end + 1} = '==========================================';
 end
 
 function lines = renderExtractSummary(result)
-%RENDEREXTRACTSUMMARY Human-readable extraction summary.
-
 lines = {};
 lines{end + 1} = sprintf('Extraction finished for: %s', result.Subsystem);
 lines{end + 1} = sprintf('Files found: %d | read: %d | skipped: %d', ...
@@ -2533,8 +2310,6 @@ end
 end
 
 function position = centeredPosition(width, height)
-%CENTEREDPOSITION Screen-centered figure position.
-
 screenSize = get(groot, 'ScreenSize');
 left = max(1, round((screenSize(3) - width) / 2));
 bottom = max(1, round((screenSize(4) - height) / 2));
