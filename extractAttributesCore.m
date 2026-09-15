@@ -1,276 +1,378 @@
 function result = extractAttributesCore(subsystemHandle, searchFolder, outputFile, options)
-%EXTRACTATTRIBUTESCORE Scan .m files for records tagged by subsystem ports.
+%EXTRACTATTRIBUTESCORE Scan .m files for attribute records matching subsystem port names.
+%
+%   result = extractAttributesCore(subsystemHandle, searchFolder, outputFile, options)
+%
+% INPUTS:
+%   subsystemHandle - Numeric handle to the Simulink subsystem
+%   searchFolder    - Parent folder containing .m files to scan (recursive)
+%   outputFile      - Destination .m file path
+%   options         - Struct with fields:
+%       .PortChoice            : 'Inports' | 'Outports' | 'Both'
+%       .IncludeMetadata       : true | false
+%       .IncludeSourceComments : true | false
+%       .CaseInsensitive       : true | false
+%       .ProgressFcn           : (optional) @(fraction, message)
+%       .CancelRequestedFcn    : (optional) @() -> true | false
+%
+% OUTPUT:
+%   result - Struct with fields:
+%       .Subsystem, .PortChoice, .FilesFound, .FilesRead,
+%       .FilesSkipped, .UniqueMatches, .OutputFile, .Tags,
+%       .Warnings, .Cancelled
 
-if nargin < 4 || isempty(options)
-    options = struct();
-end
-options = fillDefaults(options, struct( ...
-    'PortChoice',            'Both', ...
-    'IncludeMetadata',       true, ...
-    'IncludeSourceComments', true, ...
-    'CaseInsensitive',       true, ...
-    'ProgressFcn',           @(~, ~) [], ...
-    'CancelRequestedFcn',    @false));
-
-progressFcn = options.ProgressFcn;
-cancelFcn = options.CancelRequestedFcn;
-
-result = struct( ...
-    'Subsystem',      '', ...
-    'PortChoice',     options.PortChoice, ...
-    'Tags',           struct('Name', {}, 'Count', {}), ...
-    'SearchTagCount', 0, ...
-    'FilesFound',     0, ...
-    'FilesRead',      0, ...
-    'FilesSkipped',   0, ...
-    'UniqueMatches',  0, ...
-    'OutputFile',     '', ...
-    'Cancelled',      false, ...
-    'Warnings',       {{}});
-
-% HIGH-SEVERITY FIX: Safe handle check including 0 (root model)
-if isempty(subsystemHandle)
-    subsystemHandle = gcbh;
-end
-
-if isempty(subsystemHandle) || ~isnumeric(subsystemHandle) || ...
-        ~isscalar(subsystemHandle) || subsystemHandle == 0 || subsystemHandle == -1
-    error('extractAttributesCore:NoSelection', ...
-        ['No Simulink subsystem is selected. Open the model and click the ', ...
-         'required subsystem first.']);
-end
-
-try
-    blockType = get_param(subsystemHandle, 'BlockType');
-catch
-    error('extractAttributesCore:NoSelection', ...
-        'The selected subsystem handle is no longer valid.');
-end
-
-if ~strcmp(blockType, 'SubSystem')
-    error('extractAttributesCore:NotSubsystem', ...
-        'The selected block is not a subsystem: %s', getfullname(subsystemHandle));
-end
-
-result.Subsystem = getfullname(subsystemHandle);
-
-searchFolder = char(searchFolder);
-outputFile = char(outputFile);
-
-if ~isfolder(searchFolder)
-    error('extractAttributesCore:InvalidSearchFolder', ...
-        'The search folder does not exist: %s', searchFolder);
-end
-
-[outputFolder, ~, outputExtension] = fileparts(outputFile);
-if ~strcmpi(outputExtension, '.m')
-    error('extractAttributesCore:InvalidOutputFile', ...
-        'The destination file must end with .m: %s', outputFile);
-end
-if isempty(outputFolder)
-    outputFile = fullfile(pwd, outputFile);
-    outputFolder = pwd;
-end
-if ~isfolder(outputFolder)
-    error('extractAttributesCore:InvalidOutputFolder', ...
-        'The destination folder does not exist: %s', outputFolder);
-end
-result.OutputFile = outputFile;
-
-commonOptions = {'LookUnderMasks', 'on', 'FollowLinks', 'on', 'SearchDepth', 1};
-inportHandles = find_system(subsystemHandle, commonOptions{:}, 'BlockType', 'Inport');
-outportHandles = find_system(subsystemHandle, commonOptions{:}, 'BlockType', 'Outport');
-
-inportNames = normalizeBlockNames(inportHandles);
-outportNames = normalizeBlockNames(outportHandles);
-
-switch options.PortChoice
-    case 'Inports'
-        tagNames = inportNames;
-    case 'Outports'
-        tagNames = outportNames;
-    otherwise
-        tagNames = [inportNames(:); outportNames(:)].';
-        tagNames = unique(tagNames, 'stable');
-end
-
-if isempty(tagNames)
-    error('extractAttributesCore:NoPorts', ...
-        'No immediate %s were found in: %s', lower(options.PortChoice), result.Subsystem);
-end
-
-result.SearchTagCount = numel(tagNames);
-result.Tags = struct('Name', tagNames(:), 'Count', num2cell(zeros(numel(tagNames), 1)));
-
-tagLookup = containers.Map('KeyType', 'char', 'ValueType', 'logical');
-for index = 1:numel(tagNames)
-    key = strtrim(tagNames{index});
-    if options.CaseInsensitive, key = lower(key); end
-    if ~isempty(key), tagLookup(key) = true; end
-end
-
-matlabFiles = dir(fullfile(searchFolder, '**', '*.m'));
-matlabFiles = matlabFiles(~[matlabFiles.isdir]);
-
-keepFile = true(size(matlabFiles));
-for index = 1:numel(matlabFiles)
-    candidate = fullfile(matlabFiles(index).folder, matlabFiles(index).name);
-    if strcmpi(candidate, outputFile)
-        keepFile(index) = false;
+    % --- Validate inputs ---------------------------------------------------
+    if isempty(subsystemHandle) || ~isnumeric(subsystemHandle) || ...
+            ~isscalar(subsystemHandle) || subsystemHandle <= 0
+        error('extractAttributesCore:InvalidHandle', ...
+            'A valid numeric subsystem handle is required.');
     end
-end
-matlabFiles = matlabFiles(keepFile);
-result.FilesFound = numel(matlabFiles);
-
-recordMap = containers.Map('KeyType', 'char', 'ValueType', 'any');
-recordOrder = {};
-filesRead = 0;
-
-for fileIndex = 1:numel(matlabFiles)
-    if cancelFcn()
-        result.Cancelled = true;
-        return;
+    if ~isfolder(searchFolder)
+        error('extractAttributesCore:InvalidFolder', ...
+            'Search folder does not exist: %s', searchFolder);
     end
 
-    progressFcn(fileIndex / max(1, numel(matlabFiles)), ...
-        sprintf('Reading file %d of %d...', fileIndex, numel(matlabFiles)));
+    % --- Resolve port names from the subsystem -----------------------------
+    [inportNames, outportNames] = getImmediatePortNames(subsystemHandle);
 
-    sourceFile = fullfile(matlabFiles(fileIndex).folder, matlabFiles(fileIndex).name);
-    % HIGH-SEVERITY FIX: Explicit UTF-8 file reading
-    inputId = fopen(sourceFile, 'rt', 'n', 'UTF-8');
-    if inputId == -1
-        warning('extractAttributesCore:FileOpenFailed', 'Could not read: %s', sourceFile);
-        continue;
+    switch options.PortChoice
+        case 'Inports'
+            searchTags = inportNames;
+        case 'Outports'
+            searchTags = outportNames;
+        otherwise  % 'Both'
+            searchTags = unique([inportNames(:); outportNames(:)], 'stable');
+            searchTags = searchTags(:).';
     end
 
-    filesRead = filesRead + 1;
-    inputCleanup = onCleanup(@() fclose(inputId));
-    lineNumber = 0;
+    if isempty(searchTags)
+        error('extractAttributesCore:NoPorts', ...
+            'No immediate %s found in the selected subsystem.', ...
+            lower(options.PortChoice));
+    end
 
-    while true
-        rawLine = fgetl(inputId);
-        if ~ischar(rawLine), break; end
+    % --- Build the full options struct -------------------------------------
+    fullOpts = options;
+    fullOpts.InportNames  = inportNames;
+    fullOpts.OutportNames = outportNames;
 
-        lineNumber = lineNumber + 1;
-        record = strtrim(rawLine);
-        if isempty(record) || startsWith(record, '%'), continue; end
+    % --- Run the scan-and-write engine -------------------------------------
+    result = runExtraction(subsystemHandle, searchTags, searchFolder, ...
+        outputFile, fullOpts);
+end
 
-        dotPosition = find(record == '.', 1, 'first');
-        if isempty(dotPosition) || dotPosition == 1, continue; end
+%% ========================================================================
+%%  CORE SCAN-AND-WRITE ENGINE
+%% ========================================================================
+function result = runExtraction(subsystemHandle, searchTags, ...
+        searchFolder, outputFile, options)
 
-        tag = strtrim(record(1:dotPosition - 1));
-        if isempty(tag), continue; end
+    result = struct( ...
+        'Subsystem',     getfullname(subsystemHandle), ...
+        'PortChoice',    options.PortChoice, ...
+        'FilesFound',    0, ...
+        'FilesRead',     0, ...
+        'FilesSkipped',  0, ...
+        'UniqueMatches', 0, ...
+        'OutputFile',    outputFile, ...
+        'Tags',          struct('Name', {}, 'Count', {}), ...
+        'Warnings',      {}, ...
+        'Cancelled',     false);
 
-        if options.CaseInsensitive
-            lookupTag = lower(tag);
-            duplicateKey = lower(record);
-        else
-            lookupTag = tag;
-            duplicateKey = record;
+    % --- Discover .m files -------------------------------------------------
+    matlabFiles = dir(fullfile(searchFolder, '**', '*.m'));
+    matlabFiles = matlabFiles(~[matlabFiles.isdir]);
+
+    % Exclude the output file itself from scanning
+    keepMask = true(size(matlabFiles));
+    for idx = 1:numel(matlabFiles)
+        candidate = fullfile(matlabFiles(idx).folder, matlabFiles(idx).name);
+        if strcmpi(candidate, outputFile)
+            keepMask(idx) = false;
         end
+    end
+    matlabFiles = matlabFiles(keepMask);
+    result.FilesFound = numel(matlabFiles);
 
-        if ~isKey(tagLookup, lookupTag), continue; end
+    % --- Build tag lookup map ----------------------------------------------
+    tagLookup = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+    for idx = 1:numel(searchTags)
+        key = strtrim(searchTags{idx});
+        if options.CaseInsensitive
+            key = lower(key);
+        end
+        tagLookup(key) = true;
+    end
 
-        relativeSource = makeRelativePath(sourceFile, searchFolder);
-        source = sprintf('%s (line %d)', relativeSource, lineNumber);
+    % --- Containers for unique records -------------------------------------
+    recordMap   = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    recordOrder = {};
+    filesRead   = 0;
 
-        if ~isKey(recordMap, duplicateKey)
-            recordMap(duplicateKey) = struct( ...
-                'Record',   record, ...
-                'Sources',  {{source}}, ...
-                'TagIndex', findTagIndex(tag, tagNames, options.CaseInsensitive));
-            recordOrder{end + 1} = duplicateKey; %#ok<AGROW>
-        else
-            item = recordMap(duplicateKey);
-            if ~any(strcmp(item.Sources, source))
-                item.Sources{end + 1} = source; %#ok<AGROW>
-                recordMap(duplicateKey) = item;
+    % --- Scan every .m file ------------------------------------------------
+    for fileIdx = 1:numel(matlabFiles)
+
+        % Progress / cancel check
+        if checkCancel(options)
+            result.Cancelled = true;
+            return;
+        end
+        reportProgress(options, fileIdx / max(1, numel(matlabFiles)), ...
+            sprintf('Reading file %d of %d...', fileIdx, numel(matlabFiles)));
+
+        sourceFile = fullfile(matlabFiles(fileIdx).folder, ...
+            matlabFiles(fileIdx).name);
+        fid = fopen(sourceFile, 'rt');
+        if fid == -1
+            result.Warnings{end + 1} = ...
+                sprintf('Could not open: %s', sourceFile); %#ok<AGROW>
+            continue;
+        end
+        filesRead = filesRead + 1;
+        cleanupObj = onCleanup(@() fclose(fid));
+        lineNum = 0;
+
+        while true
+            rawLine = fgetl(fid);
+            if ~ischar(rawLine)
+                break;
+            end
+            lineNum = lineNum + 1;
+            record = strtrim(rawLine);
+
+            % Skip blanks and full-line comments
+            if isempty(record) || startsWith(record, '%')
+                continue;
+            end
+
+            % Must contain a dot (Tag.Property = value)
+            dotPos = find(record == '.', 1, 'first');
+            if isempty(dotPos) || dotPos == 1
+                continue;
+            end
+
+            tag = strtrim(record(1:dotPos - 1));
+            if options.CaseInsensitive
+                lookupTag  = lower(tag);
+                dedupKey   = lower(record);
+            else
+                lookupTag  = tag;
+                dedupKey   = record;
+            end
+
+            if ~isKey(tagLookup, lookupTag)
+                continue;
+            end
+
+            % Skip lines that are Simulink.Signal instantiations
+            if isSignalInstantiation(record, tag)
+                continue;
+            end
+
+            relSource = makeRelativePath(sourceFile, searchFolder);
+            sourceStr = sprintf('%s (line %d)', relSource, lineNum);
+
+            if ~isKey(recordMap, dedupKey)
+                recordMap(dedupKey) = struct( ...
+                    'Record',  record, ...
+                    'Sources', {{sourceStr}}, ...
+                    'Tag',     tag);
+                recordOrder{end + 1} = dedupKey; %#ok<AGROW>
+            else
+                item = recordMap(dedupKey);
+                if ~any(strcmp(item.Sources, sourceStr))
+                    item.Sources{end + 1} = sourceStr;
+                    recordMap(dedupKey) = item;
+                end
+            end
+        end
+        clear cleanupObj;
+    end
+
+    result.FilesRead   = filesRead;
+    result.FilesSkipped = result.FilesFound - filesRead;
+
+    % --- Compute per-tag counts --------------------------------------------
+    tagCounts = zeros(numel(searchTags), 1);
+    for recIdx = 1:numel(recordOrder)
+        item = recordMap(recordOrder{recIdx});
+        for tagIdx = 1:numel(searchTags)
+            if options.CaseInsensitive
+                match = strcmpi(item.Tag, searchTags{tagIdx});
+            else
+                match = strcmp(item.Tag, searchTags{tagIdx});
+            end
+            if match
+                tagCounts(tagIdx) = tagCounts(tagIdx) + 1;
+                break;
             end
         end
     end
-    clear inputCleanup;
-end
-
-result.FilesRead = filesRead;
-result.FilesSkipped = result.FilesFound - filesRead;
-
-for recordIndex = 1:numel(recordOrder)
-    item = recordMap(recordOrder{recordIndex});
-    if item.TagIndex >= 1 && item.TagIndex <= numel(result.Tags)
-        result.Tags(item.TagIndex).Count = result.Tags(item.TagIndex).Count + 1;
+    tagStructs = struct('Name', cell(1, 0), 'Count', cell(1, 0));
+    for tagIdx = 1:numel(searchTags)
+        tagStructs(end + 1) = struct( ...
+            'Name', searchTags{tagIdx}, ...
+            'Count', tagCounts(tagIdx)); %#ok<AGROW>
     end
-end
+    result.Tags = tagStructs;
 
-for tagIndex = 1:numel(result.Tags)
-    if result.Tags(tagIndex).Count == 0
-        result.Warnings{end + 1} = sprintf( ...
-            'Tag "%s" matched 0 records.', result.Tags(tagIndex).Name);
+    % --- Write the output file ---------------------------------------------
+    reportProgress(options, 1.0, 'Writing output file...');
+
+    outId = fopen(outputFile, 'wt');
+    if outId == -1
+        error('extractAttributesCore:OutputOpenFailed', ...
+            'Could not create the destination file: %s', outputFile);
     end
-end
+    outCleanup = onCleanup(@() fclose(outId));
 
-result.UniqueMatches = numel(recordOrder);
+    % Metadata header
+    if options.IncludeMetadata
+        fprintf(outId, '%% Auto-generated by extractAttributesCore\n');
+        fprintf(outId, '%% Generated on: %s\n', datestr(now, 31));
+        fprintf(outId, '%% Selected subsystem: %s\n', ...
+            getfullname(subsystemHandle));
+        fprintf(outId, '%% Port selection: %s\n', options.PortChoice);
+        fprintf(outId, '%% Search directory: %s\n', searchFolder);
+        fprintf(outId, '%% MATLAB files scanned: %d\n', filesRead);
+        fprintf(outId, '%% Search tags: %d\n', numel(searchTags));
+        fprintf(outId, '%% Unique matching records: %d\n', ...
+            numel(recordOrder));
+        fprintf(outId, '\n');
+    end
 
-progressFcn(1, 'Writing output file...');
-% HIGH-SEVERITY FIX: Explicit UTF-8 file writing
-outputId = fopen(outputFile, 'wt', 'n', 'UTF-8');
-if outputId == -1
-    error('extractAttributesCore:OutputOpenFailed', 'Could not create: %s', outputFile);
-end
-outputCleanup = onCleanup(@() fclose(outputId));
+    % Inport set for classification
+    inportSet = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+    for idx = 1:numel(options.InportNames)
+        inportSet(options.InportNames{idx}) = true;
+    end
 
-if options.IncludeMetadata
-    fprintf(outputId, '%% Auto-generated by extractAttributesCore\n');
-    fprintf(outputId, '%% Generated on: %s\n', char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
-    fprintf(outputId, '%% Subsystem: %s\n', result.Subsystem);
-    fprintf(outputId, '%% Search directory: %s\n\n', searchFolder);
-end
-
-for recordIndex = 1:numel(recordOrder)
-    item = recordMap(recordOrder{recordIndex});
-    if options.IncludeSourceComments
-        for sourceIndex = 1:numel(item.Sources)
-            fprintf(outputId, '%%   %s\n', item.Sources{sourceIndex});
+    % Inports section
+    if any(strcmp(options.PortChoice, {'Inports', 'Both'}))
+        inTags = searchTags(cellfun(@(t) isKey(inportSet, t), searchTags));
+        if ~isempty(inTags)
+            fprintf(outId, ...
+                '%% ===================== Inports =====================\n\n');
+            writePortBlocks(outId, inTags, recordMap, recordOrder, options);
         end
     end
-    fprintf(outputId, '%s\n', item.Record);
-    if options.IncludeSourceComments
-        fprintf(outputId, '\n');
+
+    % Outports section
+    if any(strcmp(options.PortChoice, {'Outports', 'Both'}))
+        outTags = searchTags(~cellfun(@(t) isKey(inportSet, t), searchTags));
+        if ~isempty(outTags)
+            fprintf(outId, ...
+                '%% ===================== Outports ====================\n\n');
+            writePortBlocks(outId, outTags, recordMap, recordOrder, options);
+        end
     end
-end
-clear outputCleanup;
+
+    clear outCleanup;
+    result.UniqueMatches = numel(recordOrder);
 end
 
-function index = findTagIndex(tag, tagNames, caseInsensitive)
-index = 0;
-if caseInsensitive, matches = strcmpi(tagNames, tag); else, matches = strcmp(tagNames, tag); end
-if any(matches), index = find(matches, 1, 'first'); end
+%% ========================================================================
+%%  WRITE PORT BLOCKS  (declaration + interleaved attributes)
+%% ========================================================================
+function writePortBlocks(outId, portTags, recordMap, recordOrder, options)
+    for tagIdx = 1:numel(portTags)
+        portName = portTags{tagIdx};
+        cleanVar = matlab.lang.makeValidName(portName);
+
+        % Signal object declaration
+        fprintf(outId, '%s = Simulink.Signal;\n', cleanVar);
+
+        % Interleave matching attribute records
+        for recIdx = 1:numel(recordOrder)
+            item = recordMap(recordOrder{recIdx});
+            if options.CaseInsensitive
+                match = strcmpi(item.Tag, portName);
+            else
+                match = strcmp(item.Tag, portName);
+            end
+            if match
+                if options.IncludeSourceComments
+                    if numel(item.Sources) == 1
+                        fprintf(outId, '%% Source:\n');
+                    else
+                        fprintf(outId, '%% Sources:\n');
+                    end
+                    for srcIdx = 1:numel(item.Sources)
+                        fprintf(outId, '%%   %s\n', item.Sources{srcIdx});
+                    end
+                end
+                fprintf(outId, '%s\n', item.Record);
+                if options.IncludeSourceComments
+                    fprintf(outId, '\n');
+                end
+            end
+        end
+        fprintf(outId, '\n');
+    end
+end
+
+%% ========================================================================
+%%  HELPERS
+%% ========================================================================
+function tf = isSignalInstantiation(record, tag)
+    tf = false;
+    remainder = strtrim(record(length(tag) + 1:end));
+    if ~isempty(regexp(remainder, '^=\s*Simulink\.Signal\s*;', 'once'))
+        tf = true;
+    end
+end
+
+function [inportNames, outportNames] = getImmediatePortNames(subsystemHandle)
+    commonOpts = {'LookUnderMasks', 'on', 'FollowLinks', 'on', ...
+        'SearchDepth', 1};
+    inHandles  = find_system(subsystemHandle, commonOpts{:}, ...
+        'BlockType', 'Inport');
+    outHandles = find_system(subsystemHandle, commonOpts{:}, ...
+        'BlockType', 'Outport');
+    inportNames  = normalizeBlockNames(inHandles);
+    outportNames = normalizeBlockNames(outHandles);
 end
 
 function names = normalizeBlockNames(blockHandles)
-if isempty(blockHandles), names = {}; return; end
-names = get_param(blockHandles, 'Name');
-if ischar(names), names = {names}; end
-names = cellfun(@strtrim, names, 'UniformOutput', false);
-names = names(~cellfun('isempty', names));
-names = unique(names, 'stable');
-names = names(:).';
+    if isempty(blockHandles)
+        names = {};
+        return;
+    end
+    names = get_param(blockHandles, 'Name');
+    if ischar(names)
+        names = {names};
+    end
+    names = cellfun(@strtrim, names, 'UniformOutput', false);
+    names = names(~cellfun('isempty', names));
+    names = unique(names, 'stable');
+    names = names(:).';
 end
 
-function relativePath = makeRelativePath(fullPath, rootFolder)
-rootWithSeparator = [char(rootFolder) filesep];
-if strncmpi(fullPath, rootWithSeparator, numel(rootWithSeparator))
-    relativePath = fullPath(numel(rootWithSeparator) + 1:end);
-else
-    relativePath = fullPath;
-end
-end
-
-function options = fillDefaults(options, defaults)
-if isempty(options), options = struct(); end
-fields = fieldnames(defaults);
-for index = 1:numel(fields)
-    if ~isfield(options, fields{index})
-        options.(fields{index}) = defaults.(fields{index});
+function relPath = makeRelativePath(fullPath, rootFolder)
+    rootSep = [char(rootFolder) filesep];
+    if strncmpi(fullPath, rootSep, numel(rootSep))
+        relPath = fullPath(numel(rootSep) + 1:end);
+    else
+        relPath = fullPath;
     end
 end
+
+function reportProgress(options, fraction, message)
+    if isfield(options, 'ProgressFcn') && ~isempty(options.ProgressFcn)
+        try
+            options.ProgressFcn(fraction, message);
+        catch
+        end
+    end
+end
+
+function tf = checkCancel(options)
+    tf = false;
+    if isfield(options, 'CancelRequestedFcn') && ...
+            ~isempty(options.CancelRequestedFcn)
+        try
+            tf = logical(options.CancelRequestedFcn());
+        catch
+        end
+    end
 end

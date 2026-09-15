@@ -484,8 +484,8 @@ slddTable.Layout.Row = 2;
 % =========================================================================
 %  TAB 2 - EXTRACT ATTRIBUTES
 % =========================================================================
-g2 = uigridlayout(tab2, [11 6]);
-g2.RowHeight = {24, 30, 30, 30, 30, 34, 30, 30, 20, 90, '1x'};
+g2 = uigridlayout(tab2, [9 6]);
+g2.RowHeight = {24, 30, 30, 30, 30, 34, 20, 90, '1x'};
 g2.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
 g2.Padding = [14 10 14 10];
 g2.RowSpacing = 6;
@@ -527,8 +527,8 @@ lblInfo.Layout.Row = 3;
 lblInfo.Layout.Column = 4;
 
 infoDropDown = uidropdown(g2, ...
-    'Items', {'Header + source comments', 'Header only', 'Source comments only'}, ...
-    'Value', 'Header + source comments');
+    'Items', {'Both', 'Source comments', 'Metadata only', 'No comments'}, ...
+    'Value', 'Both');
 infoDropDown.Layout.Row = 3;
 infoDropDown.Layout.Column = [5 6];
 
@@ -586,63 +586,18 @@ openFolderBtn = uibutton(g2, 'push', 'Text', 'Open Folder', ...
 openFolderBtn.Layout.Row = 6;
 openFolderBtn.Layout.Column = 6;
 
-lblConvert = uilabel(g2, 'Text', 'convert_m_to_sldd:', ...
-    'FontWeight', 'bold');
-lblConvert.Layout.Row = 7;
-lblConvert.Layout.Column = 1;
-
-convertPathEdit = uieditfield(g2, 'text', ...
-    'Value', getpref('teamtools', 'ConvertPath', ''), ...
-    'Placeholder', 'Path of convert_m_to_sldd.m or its folder');
-convertPathEdit.Layout.Row = 7;
-convertPathEdit.Layout.Column = [2 3];
-
-browseConvertBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
-    'FontSize', 11, 'ButtonPushedFcn', @browseConvertPath);
-browseConvertBtn.Layout.Row = 7;
-browseConvertBtn.Layout.Column = 4;
-
-convertBtn = uibutton(g2, 'push', 'Text', 'Convert to .sldd', ...
-    'FontSize', 11, 'FontWeight', 'bold', ...
-    'ButtonPushedFcn', @doConvertToSldd);
-safeTooltip(convertBtn, ['Runs the team''s convert_m_to_sldd function ', ...
-    'on the extracted attributes file (.m). Set the path to the ', ...
-    'convert_m_to_sldd.m file - or the folder that contains it - ', ...
-    'first; use Browse... to pick it.']);
-convertBtn.Layout.Row = 7;
-convertBtn.Layout.Column = [5 6];
-
-lblSlddDest = uilabel(g2, 'Text', 'Save .sldd in:', ...
-    'FontWeight', 'bold');
-lblSlddDest.Layout.Row = 8;
-lblSlddDest.Layout.Column = 1;
-
-slddDestEdit = uieditfield(g2, 'text', ...
-    'Value', getpref('teamtools', 'SlddDestFolder', ''), ...
-    'Placeholder', 'Folder for the created .sldd (empty = .m folder)');
-slddDestEdit.Layout.Row = 8;
-slddDestEdit.Layout.Column = [2 3];
-safeTooltip(slddDestEdit, ['Where the .sldd file(s) created by the ', ...
-    'conversion are moved. Empty = the folder of the converted .m ', ...
-    'file. Nothing is left behind in the MATLAB current folder.']);
-
-browseSlddDestBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
-    'FontSize', 11, 'ButtonPushedFcn', @browseSlddDest);
-browseSlddDestBtn.Layout.Row = 8;
-browseSlddDestBtn.Layout.Column = 4;
-
 lblTags = uilabel(g2, 'Text', 'Tags that will be searched:', ...
     'FontWeight', 'bold');
-lblTags.Layout.Row = 9;
+lblTags.Layout.Row = 7;
 lblTags.Layout.Column = [1 6];
 
 tagsList = uilistbox(g2);
-tagsList.Layout.Row = 10;
+tagsList.Layout.Row = 8;
 tagsList.Layout.Column = [1 6];
 
 log2 = uitextarea(g2, 'Editable', 'off', ...
     'Value', {'Ready. Select a subsystem in Simulink and press Refresh.'});
-log2.Layout.Row = 11;
+log2.Layout.Row = 9;
 log2.Layout.Column = [1 6];
 
 % ---- initial content -------------------------------------------------------
@@ -1016,8 +971,6 @@ portDropDown.Value = 'Both';
 infoDropDown.Value = 'Header + source comments';
 searchEdit.Value = '';
 destEdit.Value = '';
-convertPathEdit.Value = '';
-slddDestEdit.Value = '';
 chkCase2.Value = true;
 tagsList.Items = {};
 try
@@ -1372,10 +1325,12 @@ logMany(log1, lines);
 state.LastGeneratedModel = result.TargetModel;
 setpref('teamtools', 'GeneratedModel', result.TargetModel);
 connModelEdit.Value = result.TargetModel;
-destEdit.Value = [result.TargetModel, '_data.m'];
-logTo(log1, sprintf(['Extract destination (Tab 2) set to "%s_data.m" - ', ...
-    'edit it there if you want a different name.'], ...
-    result.TargetModel));
+% Auto-populate Tab 2 destination with full path so Extract works immediately
+autoDestFile = fullfile(saveFolder, [modelName '_data.m']);
+destEdit.Value = autoDestFile;
+setpref('teamtools', 'OutputFile', autoDestFile);
+logTo(log1, sprintf(['Extract destination (Tab 2) set to:\n  %s\n', ...
+    'Edit it there if you want a different name.'], autoDestFile));
 refreshConnections();
 
 if isempty(result.Warnings)
@@ -2047,12 +2002,18 @@ end
 
 infoChoice = infoDropDown.Value;
 switch infoChoice
-    case 'Header only'
+    case 'Both'
         includeMetadata = true;
-        includeComments = false;
-    case 'Source comments only'
+        includeComments = true;
+    case 'Source comments'
         includeMetadata = false;
         includeComments = true;
+    case 'Metadata only'
+        includeMetadata = true;
+        includeComments = false;
+    case 'No comments'
+        includeMetadata = false;
+        includeComments = false;
     otherwise
         includeMetadata = true;
         includeComments = true;
@@ -2123,214 +2084,6 @@ catch
 end
 end
 
-function browseConvertPath(~, ~)
-%BROWSECONVERTPATH Pick the convert_m_to_sldd.m file.
-
-[pickedFile, pickedPath] = uigetfile('*.m', ...
-    'Pick convert_m_to_sldd.m');
-bringAppToFront();
-if isequal(pickedFile, 0)
-    return;
-end
-convertPathEdit.Value = fullfile(pickedPath, pickedFile);
-setpref('teamtools', 'ConvertPath', convertPathEdit.Value);
-end
-
-function browseSlddDest(~, ~)
-%BROWSESLDDDEST Pick the folder the .sldd files are moved to.
-
-pickedFolder = uigetdir(pwd, 'Pick the folder for the .sldd file(s)');
-bringAppToFront();
-if isequal(pickedFolder, 0)
-    return;
-end
-slddDestEdit.Value = pickedFolder;
-setpref('teamtools', 'SlddDestFolder', pickedFolder);
-end
-
-function doConvertToSldd(~, ~)
-%DOCONVERTTOSLDD Run the team's convert_m_to_sldd on the extracted file.
-
-convertPath = char(strtrim(convertPathEdit.Value));
-if isempty(convertPath)
-    notify(app, ['Enter the path of convert_m_to_sldd.m (or its ', ...
-        'folder) first - use Browse... to pick it.'], ...
-        'Missing path', 'warning');
-    return;
-end
-
-% the conversion input: the extracted attributes .m file
-mFile = state.ExtractOutput;
-if isempty(mFile) || ~isfile(mFile)
-    candidate = char(strtrim(destEdit.Value));
-    if ~isempty(candidate) && isfile(candidate)
-        mFile = candidate;
-    end
-end
-if isempty(mFile) || ~isfile(mFile)
-    notify(app, ['Extract the attributes first - the extracted .m ', ...
-        'file is the input for the conversion (or point the ', ...
-        'destination file at an existing .m).'], ...
-        'No extracted file', 'warning');
-    return;
-end
-
-% the path field accepts the folder OR the .m file itself
-if isfolder(convertPath)
-    convertFolder = convertPath;
-elseif isfile(convertPath)
-    convertFolder = fileparts(convertPath);
-else
-    notify(app, sprintf('The path does not exist:\n%s', convertPath), ...
-        'Invalid path', 'error');
-    return;
-end
-addpath(convertFolder);
-if exist('convert_m_to_sldd', 'file') ~= 2
-    notify(app, sprintf(['convert_m_to_sldd.m was not found in:\n%s\n\n', ...
-        'Check the path (the file or its folder).'], convertFolder), ...
-        'Function not found', 'error');
-    return;
-end
-setpref('teamtools', 'ConvertPath', convertPath);
-
-% call it the way it is declared: a 0-input function is called without
-% arguments, otherwise the extracted file is passed; a plain script
-% (nargin fails) is run as-is
-try
-    declaredInputs = nargin('convert_m_to_sldd');
-catch
-    declaredInputs = -1;
-end
-if declaredInputs <= 0
-    logTo(log2, ['NOTE: this convert_m_to_sldd takes no input - it ', ...
-        'scans its own root folder and may ignore the extracted ', ...
-        'file. If it creates nothing, check the root setting ', ...
-        'inside convert_m_to_sldd.m.']);
-end
-
-% resolve where the created .sldd files must end up: the field,
-% else the folder of the .m file - never the MATLAB current folder
-slddDest = char(strtrim(slddDestEdit.Value));
-if isfile(slddDest)
-    slddDest = fileparts(slddDest);
-end
-if isempty(slddDest)
-    slddDest = fileparts(mFile);
-end
-slddDest = absFolder(slddDest);
-if ~isempty(char(strtrim(slddDestEdit.Value)))
-    setpref('teamtools', 'SlddDestFolder', ...
-        char(strtrim(slddDestEdit.Value)));
-end
-if ~isfolder(slddDest)
-    logTo(log2, sprintf(['WARNING: "Save .sldd in" is not a folder:', ...
-        '\n  %s\nThe .sldd file(s) stay where the team function ', ...
-        'put them.'], slddDest));
-    slddDest = '';
-end
-
-% remember which .sldd files already exist, so the ones this run
-% creates (or overwrites) can be moved to the destination
-slddWatch = unique({absFolder(pwd); absFolder(fileparts(mFile)); ...
-    absFolder(convertFolder)});
-if ~isempty(slddDest)
-    slddWatch = unique([slddWatch; {slddDest}]);
-end
-slddBefore = struct('Path', {}, 'Modified', {});
-for slddWatchIndex = 1:numel(slddWatch)
-    slddBefore = [slddBefore, ...
-        slddFilesIn(slddWatch{slddWatchIndex})]; %#ok<AGROW>
-end
-
-setStatus('Running convert_m_to_sldd...');
-try
-    if declaredInputs == 0
-        convert_m_to_sldd();
-        callText = 'convert_m_to_sldd()';
-    elseif declaredInputs == -1
-        convert_m_to_sldd; %#ok<NASGU>
-        callText = 'convert_m_to_sldd';
-    else
-        convert_m_to_sldd(mFile);
-        callText = sprintf('convert_m_to_sldd(''%s'')', mFile);
-    end
-catch convertError
-    logTo(log2, ['ERROR: ' errorDetails(convertError)]);
-    notify(app, errorDetails(convertError), ...
-        'convert_m_to_sldd failed', 'error');
-    setStatus('Conversion failed - see the log.');
-    return;
-end
-logTo(log2, sprintf('%s finished on:\n  %s', callText, mFile));
-
-% the .sldd files this run created or overwrote
-slddCreated = {};
-for slddWatchIndex = 1:numel(slddWatch)
-    slddNow = slddFilesIn(slddWatch{slddWatchIndex});
-    for slddFileIndex = 1:numel(slddNow)
-        slddMatch = find(strcmp({slddBefore.Path}, ...
-            slddNow(slddFileIndex).Path), 1);
-        if isempty(slddMatch) || ...
-                slddNow(slddFileIndex).Modified > ...
-                slddBefore(slddMatch).Modified
-            slddCreated{end + 1} = ...
-                slddNow(slddFileIndex).Path; %#ok<AGROW>
-        end
-    end
-end
-
-if isempty(slddCreated)
-    logTo(log2, ['No new or updated .sldd file was detected (looked ', ...
-        'in the current folder, the .m folder, the convert function ', ...
-        'folder and the destination - subfolders included). If the ', ...
-        'team function writes somewhere else, move it manually.']);
-    setStatus('Conversion finished - no .sldd detected.');
-    notify(app, sprintf(['%s finished, but no new .sldd file was ', ...
-        'detected.\n\nDetails are in the log.'], callText), ...
-        'Convert to .sldd', 'warning');
-    return;
-end
-
-slddLines = {};
-slddAllMoved = ~isempty(slddDest);
-for slddCreatedIndex = 1:numel(slddCreated)
-    [slddFileFolder, slddFileName] = ...
-        fileparts(slddCreated{slddCreatedIndex});
-    if isempty(slddDest) || strcmpi(slddFileFolder, slddDest)
-        slddLines{end + 1} = sprintf('  %s  (in %s)', ...
-            slddFileName, slddFileFolder); %#ok<AGROW>
-    else
-        slddTarget = fullfile(slddDest, slddFileName);
-        try
-            if isfile(slddTarget)
-                delete(slddTarget);
-            end
-            movefile(slddCreated{slddCreatedIndex}, slddTarget);
-            slddLines{end + 1} = sprintf('  %s  moved to %s', ...
-                slddFileName, slddDest); %#ok<AGROW>
-        catch slddMoveError
-            slddAllMoved = false;
-            slddLines{end + 1} = sprintf( ...
-                '  %s  could NOT be moved to %s (%s)', ...
-                slddFileName, slddDest, slddMoveError.message); %#ok<AGROW>
-        end
-    end
-end
-logTo(log2, sprintf('.sldd file(s) created by this run:\n%s', ...
-    strjoin(slddLines, newline)));
-if isempty(slddDest) || ~slddAllMoved
-    setStatus('Conversion finished - check the log for the .sldd.');
-    notify(app, sprintf(['%s finished.\n\nThe .sldd location is in ', ...
-        'the log.'], callText), 'Convert to .sldd', 'warning');
-else
-    setStatus(sprintf('%d .sldd file(s) in: %s', ...
-        numel(slddCreated), slddDest));
-    notify(app, sprintf(['%s finished.\n\n%d .sldd file(s) are ', ...
-        'in:\n%s'], callText, numel(slddCreated), slddDest), ...
-        'Convert to .sldd', 'success');
-end
-end
 
 % =========================================================================
 %  LOCAL FUNCTIONS
