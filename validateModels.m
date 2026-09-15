@@ -1,57 +1,55 @@
 function issues = validateModels(modelsFolder, selectedModels, progressFcn)
-%VALIDATEMODELS Pre-build validation: sample times, config consistency,
-% and SLDD conflicts.
+%VALIDATEMODELS Orchestrate all validation checks.
 %
-%   issues = validateModels(modelsFolder, selectedModels)
 %   issues = validateModels(modelsFolder, selectedModels, progressFcn)
 %
-% Delegates to checkSampleTimes.m, checkConfigConsistency.m, and
-% checkSLDDConflicts.m, and merges their results into one struct array:
-%
-%   issues(i).Category    — 'SampleTime' | 'Config' | 'SLDD' | 'Info'
-%   issues(i).Severity    — 'error' | 'warning' | 'info'
-%   issues(i).Model       — model name or symbol name
-%   issues(i).Port        — port name (may be '')
-%   issues(i).Description — human-readable description
-%   issues(i).FixMethod   — 'InsertUnitDelay' | 'SetOutportConstant' |
-%                           'SyncToMaster' | 'MatchParent' | 'none'
-%   issues(i).FixData     — struct with the data applyFixes.m needs
+% Dispatches to:
+%   checkConfigConsistency(modelsFolder, selectedModels, progressFcn)
+%   checkSampleTimes(modelsFolder, selectedModels, progressFcn)
+%   checkSLDDConflicts(modelsFolder, progressFcn)   <-- no models arg
 
-if nargin < 3 || isempty(progressFcn)
-    progressFcn = @(pct, msg) fprintf('[%.0f%%] %s\n', pct*100, msg);
-end
+    if nargin < 3 || isempty(progressFcn)
+        progressFcn = @(pct, msg) fprintf('[%.0f%%] %s\n', pct*100, msg);
+    end
 
-if ischar(selectedModels)
-    selectedModels = {selectedModels};
-end
-selectedModels = regexprep(selectedModels, '\.(slx|mdl)$', '', 'ignorecase');
+    issues = struct('Category', {}, 'Severity', {}, 'Model', {}, ...
+        'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {});
 
-issues = struct('Category', {}, 'Severity', {}, 'Model', {}, ...
-    'Port', {}, 'Description', {}, 'FixMethod', {}, 'FixData', {});
+    nSteps = 3;
 
-% Stage weighting within the overall progress bar.
-stStart = 0.00; stSpan = 0.40;    % sample times
-cfgStart = 0.40; cfgSpan = 0.20;  % config consistency
-slddStart = 0.60; slddSpan = 0.40; % SLDD conflicts
+    % --- Step 1: Configuration consistency --------------------------------
+    progressFcn(1/nSteps, 'Checking configuration parameters...');
+    try
+        configIssues = checkConfigConsistency(modelsFolder, selectedModels, ...
+            @(pct, msg) progressFcn(pct * 0.33, msg));
+        issues = [issues, configIssues]; %#ok<AGROW>
+    catch e
+        warning('validateModels:ConfigCheck', ...
+            'Configuration check failed: %s', e.message);
+    end
 
-progressFcn(stStart, 'Checking sample times...');
-sampleTimeIssues = checkSampleTimes(modelsFolder, selectedModels, ...
-    @(f, m) progressFcn(stStart + f * stSpan, m));
-issues = [issues, sampleTimeIssues];
+    % --- Step 2: Sample times ---------------------------------------------
+    progressFcn(2/nSteps, 'Checking outport sample times...');
+    try
+        sampleIssues = checkSampleTimes(modelsFolder, selectedModels, ...
+            @(pct, msg) progressFcn(0.33 + pct * 0.34, msg));
+        issues = [issues, sampleIssues]; %#ok<AGROW>
+    catch e
+        warning('validateModels:SampleTimeCheck', ...
+            'Sample time check failed: %s', e.message);
+    end
 
-progressFcn(cfgStart, 'Checking configuration consistency...');
-configIssues = checkConfigConsistency(modelsFolder, selectedModels, ...
-    @(f, m) progressFcn(cfgStart + f * cfgSpan, m));
-issues = [issues, configIssues];
+    % --- Step 3: SLDD conflicts -------------------------------------------
+    progressFcn(3/nSteps, 'Checking data dictionary conflicts...');
+    try
+        % NOTE: checkSLDDConflicts takes (folder, progressFcn) — NO models list
+        slddIssues = checkSLDDConflicts(modelsFolder, ...
+            @(pct, msg) progressFcn(0.67 + pct * 0.33, msg));
+        issues = [issues, slddIssues]; %#ok<AGROW>
+    catch e
+        warning('validateModels:SLDDCheck', ...
+            'SLDD check failed: %s', e.message);
+    end
 
-progressFcn(slddStart, 'Checking SLDD dictionaries...');
-slddIssues = checkSLDDConflicts(modelsFolder, ...
-    @(f, m) progressFcn(slddStart + f * slddSpan, m));
-issues = [issues, slddIssues];
-
-nErrors = sum(strcmp({issues.Severity}, 'error'));
-nWarnings = sum(strcmp({issues.Severity}, 'warning'));
-nInfo = sum(strcmp({issues.Severity}, 'info'));
-progressFcn(1.0, sprintf('Validation complete: %d errors, %d warnings, %d info', ...
-    nErrors, nWarnings, nInfo));
+    progressFcn(1, sprintf('Validation complete: %d issue(s) found.', numel(issues)));
 end
