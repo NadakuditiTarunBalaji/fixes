@@ -165,8 +165,7 @@ availableList.Layout.Column = [1 2];
 safeTooltip(availableList, ...
     'Ctrl+click or Shift+click to select several models at once');
 
-btnGrid = uigridlayout(g1, [7 1]); % 7 rows to support Import Excel
-btnGrid.Layout.Row = 4;
+btnGrid = uigridlayout(g1, [8 1]); % 8 rows to support Import Excel + ValidatebtnGrid.Layout.Row = 4;
 btnGrid.Layout.Column = 3;
 btnGrid.Padding = [2 2 2 2];
 btnGrid.RowSpacing = 5;
@@ -180,6 +179,12 @@ addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', ...
 safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
     'when a search filter is active, only the matching models ', ...
     'are added.']);
+validateBtn = uibutton(btnGrid, 'push', 'Text', 'Validate', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @doValidate);
+safeTooltip(validateBtn, ['Creates a temporary parent model, compiles it, ', ...
+    'and detects sample-time conflicts, Outport issues, and data ', ...
+    'dictionary warnings BEFORE you waste time on a full Generate.']);
 
 importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
     'FontSize', 11, ...
@@ -965,6 +970,94 @@ setStatus(importedMsg);
 logTo(log1, importedMsg);
 end
 
+function doValidate(~, ~)
+%DOVALIDATE Run model compatibility checks before Preview/Generate.
+
+folder = char(strtrim(modelsFolderEdit.Value));
+if ~isfolder(folder)
+    notify(app, 'Choose a valid models folder first.', ...
+        'Missing folder', 'warning');
+    return;
+end
+models = selectedList.Items;
+if isempty(models)
+    notify(app, 'Add at least one model to the selected list.', ...
+        'No models', 'warning');
+    return;
+end
+
+setStatus('Validating model compatibility...');
+validateBtn.Enable = 'off';
+p = makeProgress(app, 'Validating models');
+try
+    report = validateModelCompatibility(folder, models, ...
+        @(frac, msg) p.set(frac, msg));
+    p.close();
+catch valErr
+    p.close();
+    validateBtn.Enable = 'on';
+    logTo(log1, ['ERROR: Validation failed: ' errorDetails(valErr)]);
+    notify(app, errorDetails(valErr), 'Validation failed', 'error');
+    return;
+end
+validateBtn.Enable = 'on';
+
+% Display results in the log
+logTo(log1, '========== VALIDATION REPORT ==========');
+logTo(log1, sprintf('Models checked: %d | Skipped: %d', ...
+    report.ModelsChecked, report.ModelsSkipped));
+
+if isempty(report.Issues)
+    logTo(log1, 'No issues found. All models are compatible.');
+    logTo(log1, '========================================');
+    setStatus('Validation passed - ready to Preview/Generate.');
+    notify(app, sprintf(['Validation passed.\n\n%d models checked, ', ...
+        'no compatibility issues found.\n\nYou can safely Preview ', ...
+        'and Generate.'], report.ModelsChecked), ...
+        'Validation Passed', 'success');
+else
+    errorCount = sum(strcmp({report.Issues.Severity}, 'error'));
+    warnCount = sum(strcmp({report.Issues.Severity}, 'warning'));
+    logTo(log1, sprintf('Found %d error(s) and %d warning(s):', ...
+        errorCount, warnCount));
+
+    for issueIdx = 1:numel(report.Issues)
+        issue = report.Issues(issueIdx);
+        severityTag = upper(issue.Severity);
+        modelTag = issue.Model;
+        if isempty(modelTag)
+            modelTag = '(general)';
+        end
+        logTo(log1, sprintf('  [%s] %s: %s', severityTag, modelTag, ...
+            issue.Description));
+        logTo(log1, sprintf('         Fix: %s', issue.FixSuggestion));
+    end
+
+    logTo(log1, sprintf('Recommended parent FixedStep: %s', ...
+        report.RecommendedStep));
+    logTo(log1, '========================================');
+
+    if errorCount > 0
+        setStatus(sprintf('Validation found %d error(s) - see log for fixes.', ...
+            errorCount));
+        notify(app, sprintf(['Validation found %d error(s) and %d warning(s).\n\n', ...
+            'Recommended FixedStep: %s\n\n', ...
+            'See the log for detailed fix instructions.\n\n', ...
+            'Common fix: After Generate, open the parent model and run:\n', ...
+            '  set_param(gcs, ''FixedStep'', ''%s'')\n', ...
+            'Or use a variable-step solver.'], ...
+            errorCount, warnCount, report.RecommendedStep, ...
+            report.RecommendedStep), ...
+            'Validation Issues Found', 'warning');
+    else
+        setStatus(sprintf('Validation found %d warning(s) - see log.', warnCount));
+        notify(app, sprintf(['Validation found %d warning(s) but no errors.\n\n', ...
+            'Generation should succeed. Check the log for details.'], ...
+            warnCount), 'Validation Warnings', 'info');
+    end
+end
+end
+
 function removeModel(~, ~)
 if isempty(selectedList.Items)
     setStatus('The selected list is already empty.');
@@ -1048,6 +1141,7 @@ try
 catch
 end
 insertDelayBtn.Enable = 'off';
+validateBtn.Enable = 'on';
 chkCfgInports.Value = true;
 chkCfgOutports.Value = true;
 chkCfgPropagation.Value = true;
@@ -1266,10 +1360,30 @@ try
     p.close();
 catch previewError
     p.close();
-    invalidatePreview(); % Reset buttons state back to default on error
+    invalidatePreview();
+    errText = errorDetails(previewError);
     setStatus('Preview failed.');
-    logTo(log1, ['ERROR: ' errorDetails(previewError)]);
-    notify(app, errorDetails(previewError), 'Preview failed', 'error');
+    logTo(log1, ['ERROR: ' errText]);
+
+    % Auto-detect sample-time errors and suggest validation
+    if contains(errText, 'fixed-step size') || ...
+       contains(errText, 'sample time') || ...
+       contains(errText, 'integer multiple')
+        logTo(log1, '');
+        logTo(log1, '>>> SAMPLE-TIME ERROR DETECTED <<<');
+        logTo(log1, 'Click the "Validate" button to get a detailed');
+        logTo(log1, 'diagnostic report with fix suggestions.');
+        logTo(log1, '');
+        notify(app, sprintf(['Preview failed with a sample-time error:\n\n', ...
+            '%s\n\n', ...
+            'Click the "Validate" button in the model list panel ', ...
+            'to get a detailed report with fix suggestions.\n\n', ...
+            'Quick fix: After Generate, open the parent model and run:\n', ...
+            '  set_param(gcs, ''Solver'', ''ode45'')'], errText), ...
+            'Sample-Time Error - Run Validate', 'error');
+    else
+        notify(app, errText, 'Preview failed', 'error');
+    end
     return;
 end
 
@@ -1366,11 +1480,28 @@ try
     p.close();
 catch generateError
     p.close();
-    generateBtn.Enable = 'on';
-    previewBtn.Enable = 'off';
+    invalidatePreview();
+    errText = errorDetails(generateError);
     setStatus('Generation failed.');
-    logTo(log1, ['ERROR: ' errorDetails(generateError)]);
-    notify(app, errorDetails(generateError), 'Generation failed', 'error');
+    logTo(log1, ['ERROR: ' errText]);
+
+    if contains(errText, 'fixed-step size') || ...
+       contains(errText, 'sample time') || ...
+       contains(errText, 'integer multiple')
+        logTo(log1, '');
+        logTo(log1, '>>> SAMPLE-TIME ERROR DETECTED <<<');
+        logTo(log1, 'Click "Validate" for a detailed diagnostic report.');
+        logTo(log1, '');
+        notify(app, sprintf(['Generation failed with a sample-time error:\n\n', ...
+            '%s\n\n', ...
+            'Click the "Validate" button to diagnose the issue.\n\n', ...
+            'Quick fix: Generate with Preview first, then open the ', ...
+            'parent model and change the solver:\n', ...
+            '  set_param(''YourModel'', ''FixedStep'', ''0.001'')'], errText), ...
+            'Sample-Time Error - Run Validate', 'error');
+    else
+        notify(app, errText, 'Generation failed', 'error');
+    end
     return;
 end
 
