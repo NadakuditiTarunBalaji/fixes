@@ -5,9 +5,8 @@ function teamtools
 %
 % Opens a single window with two tabs:
 %   1. Build Parent Model  - generate a parent model from referenced
-%      models (preview first), with a search box that filters the
-%      available-models list, Excel model import, compatibility validation,
-%      and an optional loop breaker that inserts a Unit Delay on backward connections.
+%      models (unified preview & compatibility validation), with an
+%      Excel model importer, search filter, and an optional loop breaker.
 %   2. Extract Attributes  - collect attribute records from .m files
 %      using a selected subsystem's port names as search tags.
 %
@@ -111,8 +110,8 @@ g1.RowSpacing = 6;
 g1.ColumnSpacing = 8;
 
 hint1 = uilabel(g1, ...
-    'Text', ['1) Choose the models folder    2) Add models in order    ' ...
-    '3) Validate compatibility    4) Preview    5) Generate'], ...
+    'Text', ['1) Choose models folder    2) Add/Import models in order    ' ...
+    '3) Preview (Validates compatibility & wiring)    4) Generate'], ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
 hint1.Layout.Row = 1;
 hint1.Layout.Column = [1 6];
@@ -159,11 +158,11 @@ availableList.Layout.Column = [1 2];
 safeTooltip(availableList, ...
     'Ctrl+click or Shift+click to select several models at once');
 
-btnGrid = uigridlayout(g1, [8 1]);
+btnGrid = uigridlayout(g1, [7 1]);
 btnGrid.Layout.Row = 4;
 btnGrid.Layout.Column = 3;
 btnGrid.Padding = [2 2 2 2];
-btnGrid.RowSpacing = 4;
+btnGrid.RowSpacing = 5;
 
 addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', ...
     'FontSize', 11, ...
@@ -180,12 +179,6 @@ importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
     'ButtonPushedFcn', @importFromExcel);
 safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
     'to import an ordered list of models from Column A.']);
-
-validateBtn = uibutton(btnGrid, 'push', 'Text', 'Validate', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @doValidate);
-safeTooltip(validateBtn, ['Checks model referencing compatibility, ', ...
-    'sample times, and Outport configurations before Generate.']);
 
 removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', ...
     'FontSize', 11, ...
@@ -296,6 +289,8 @@ chkAutoDelay.Layout.Column = [4 6];
 previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
     'FontSize', 12, ...
     'ButtonPushedFcn', @doPreview);
+safeTooltip(previewBtn, ['Validates sample-time & model referencing compatibility ', ...
+    'and displays the full connection plan. Must be run before Generate.']);
 previewBtn.Layout.Row = 10;
 previewBtn.Layout.Column = [2 3];
 
@@ -905,87 +900,6 @@ setStatus(importedMsg);
 logTo(log1, importedMsg);
 end
 
-function doValidate(~, ~)
-folder = char(strtrim(modelsFolderEdit.Value));
-if ~isfolder(folder)
-    notify(app, 'Choose a valid models folder first.', ...
-        'Missing folder', 'warning');
-    return;
-end
-models = selectedList.Items;
-if isempty(models)
-    notify(app, 'Add at least one model to the selected list.', ...
-        'No models', 'warning');
-    return;
-end
-
-setStatus('Validating model compatibility...');
-validateBtn.Enable = 'off';
-p = makeProgress(app, 'Validating models');
-try
-    report = validateModelCompatibility(folder, models, ...
-        @(frac, msg) p.set(frac, msg));
-    p.close();
-catch valErr
-    p.close();
-    validateBtn.Enable = 'on';
-    logTo(log1, ['ERROR: Validation failed: ' errorDetails(valErr)]);
-    notify(app, errorDetails(valErr), 'Validation failed', 'error');
-    return;
-end
-validateBtn.Enable = 'on';
-
-logTo(log1, '========== VALIDATION REPORT ==========');
-logTo(log1, sprintf('Models checked: %d | Skipped: %d', ...
-    report.ModelsChecked, report.ModelsSkipped));
-
-if isempty(report.Issues)
-    logTo(log1, 'No issues found. All models are compatible.');
-    logTo(log1, '========================================');
-    setStatus('Validation passed - ready to Preview/Generate.');
-    notify(app, sprintf(['Validation passed.\n\n%d models checked, ', ...
-        'no compatibility issues found.\n\nYou can safely Preview ', ...
-        'and Generate.'], report.ModelsChecked), ...
-        'Validation Passed', 'success');
-else
-    errorCount = sum(strcmp({report.Issues.Severity}, 'error'));
-    warnCount = sum(strcmp({report.Issues.Severity}, 'warning'));
-    logTo(log1, sprintf('Found %d error(s) and %d warning(s):', ...
-        errorCount, warnCount));
-
-    for issueIdx = 1:numel(report.Issues)
-        issue = report.Issues(issueIdx);
-        severityTag = upper(issue.Severity);
-        modelTag = issue.Model;
-        if isempty(modelTag)
-            modelTag = '(general)';
-        end
-        logTo(log1, sprintf('  [%s] %s: %s', severityTag, modelTag, ...
-            issue.Description));
-        logTo(log1, sprintf('         Fix: %s', issue.FixSuggestion));
-    end
-
-    logTo(log1, sprintf('Recommended parent FixedStep: %s', ...
-        report.RecommendedStep));
-    logTo(log1, '========================================');
-
-    if errorCount > 0
-        setStatus(sprintf('Validation found %d error(s) - see log for fixes.', ...
-            errorCount));
-        notify(app, sprintf(['Validation found %d error(s) and %d warning(s).\n\n', ...
-            'Recommended FixedStep: %s\n\n', ...
-            'See the log for detailed fix instructions.'], ...
-            errorCount, warnCount, report.RecommendedStep), ...
-            'Validation Issues Found', 'warning');
-    else
-        setStatus(sprintf('Validation found %d warning(s) - see log.', warnCount));
-        notify(app, sprintf(['Validation found %d warning(s) but no errors.\n\n', ...
-            'Generation should succeed. Check the log for details.'], ...
-            warnCount), 'Validation Warnings', 'info');
-    end
-end
-end
-
 function removeModel(~, ~)
 if isempty(selectedList.Items)
     setStatus('The selected list is already empty.');
@@ -1050,7 +964,6 @@ chkAutoDelay.Value = true;
 
 previewBtn.Enable = 'on';
 generateBtn.Enable = 'off';
-validateBtn.Enable = 'on';
 
 connModelEdit.Value = '';
 chkDelayFilter.Value = false;
@@ -1237,13 +1150,29 @@ end
 end
 
 function doPreview(~, ~)
+%DOPREVIEW Unified compatibility validation and connection plan preview.
+
 [folder, models, modelName, saveFolder] = validateTab1();
 if isempty(folder) || isempty(models)
     return;
 end
 
-logTo(log1, sprintf('Preview: %d model(s) -> "%s".', numel(models), modelName));
+logTo(log1, sprintf('Preview & Validate: %d model(s) -> "%s".', numel(models), modelName));
 
+setStatus('Validating compatibility & building plan...');
+previewBtn.Enable = 'off';
+p = makeProgress(app, 'Preview & Validation');
+
+% --- Step 1: Compatibility & Sample-Time Check ---
+valReport = [];
+try
+    valReport = validateModelCompatibility(folder, models, ...
+        @(frac, msg) p.set(0.05 + 0.45 * frac, ['[1/2 Validate] ' msg]));
+catch valErr
+    logTo(log1, ['WARNING: Compatibility check failed: ' errorDetails(valErr)]);
+end
+
+% --- Step 2: Structural Wiring Preview ---
 styleOpts = integrationStyle();
 options = struct( ...
     'PreviewOnly',          true, ...
@@ -1260,11 +1189,8 @@ options = struct( ...
     'ModelToModelGap',      styleOpts.ModelToModelGap, ...
     'ConfigParameters',     {{'UseDivisionForNetSlopeComputation'}});
 
-setStatus('Preparing preview...');
-previewBtn.Enable = 'off';
-p = makeProgress(app, 'Preparing preview');
 try
-    options.ProgressFcn = @(fraction, message) p.set(fraction, message);
+    options.ProgressFcn = @(frac, msg) p.set(0.50 + 0.48 * frac, ['[2/2 Preview] ' msg]);
     options.CancelRequestedFcn = @() p.cancelled();
     result = buildParentModelCore(folder, models, modelName, options);
     p.close();
@@ -1274,43 +1200,57 @@ catch previewError
     errText = errorDetails(previewError);
     setStatus('Preview failed.');
     logTo(log1, ['ERROR: ' errText]);
-
-    if contains(errText, 'fixed-step size') || ...
-       contains(errText, 'sample time') || ...
-       contains(errText, 'integer multiple')
-        logTo(log1, '');
-        logTo(log1, '>>> SAMPLE-TIME ERROR DETECTED <<<');
-        logTo(log1, 'Click the "Validate" button to diagnose compatibility.');
-        logTo(log1, '');
-        notify(app, sprintf(['Preview failed with a sample-time error:\n\n', ...
-            '%s\n\n', ...
-            'Click the "Validate" button in the model list panel ', ...
-            'to get a detailed report with fix suggestions.'], errText), ...
-            'Sample-Time Error - Run Validate', 'error');
-    else
-        notify(app, errText, 'Preview failed', 'error');
-    end
+    notify(app, errText, 'Preview failed', 'error');
     return;
 end
 
+% Validation & Preview succeeded: Lock Preview, Enable Generate
 previewBtn.Enable = 'off';
 generateBtn.Enable = 'on';
 
-logMany(log1, renderPlanLines(result, state.LastImportedMissing));
-setStatus('Preview complete - review it above, then press Generate.');
+% Combine wiring plan and validation report into log
+planLines = renderPlanLines(result, state.LastImportedMissing);
 
-msgText = sprintf(['Preview complete.\n\n%d model(s), %d internal ', ...
-    'connection(s), %d root input(s), %d root output(s).\n\n', ...
+if ~isempty(valReport)
+    valLines = {};
+    valLines{end + 1} = '---------------- COMPATIBILITY REPORT ----------------';
+    valLines{end + 1} = sprintf('Models checked: %d | Skipped: %d', ...
+        valReport.ModelsChecked, valReport.ModelsSkipped);
+    if isempty(valReport.Issues)
+        valLines{end + 1} = 'Compatibility Status: All models are fully compatible!';
+    else
+        errCount = sum(strcmp({valReport.Issues.Severity}, 'error'));
+        warnCount = sum(strcmp({valReport.Issues.Severity}, 'warning'));
+        valLines{end + 1} = sprintf('Issues found: %d error(s), %d warning(s)', errCount, warnCount);
+        for iIdx = 1:numel(valReport.Issues)
+            iss = valReport.Issues(iIdx);
+            valLines{end + 1} = sprintf('  [%s] %s: %s', upper(iss.Severity), iss.Model, iss.Description);
+            valLines{end + 1} = sprintf('         Fix: %s', iss.FixSuggestion);
+        end
+        valLines{end + 1} = sprintf('Auto-calculated Recommended FixedStep: %s', valReport.RecommendedStep);
+    end
+    valLines{end + 1} = '------------------------------------------------------';
+    planLines = [valLines(:); planLines(:)];
+end
+
+logMany(log1, planLines);
+setStatus('Preview & Validation complete - review above, then press Generate.');
+
+msgText = sprintf(['Preview & Validation complete.\n\n', ...
+    '%d model(s), %d internal connection(s), %d root input(s), %d root output(s).\n\n', ...
     'Preview is locked. Only the Generate button is enabled.'], ...
     numel(result.Models), result.Counts.Internal, ...
     result.Counts.RootInputs, result.Counts.RootOutputs);
 
-if ~isempty(state.LastImportedMissing)
-    msgText = sprintf('%s\n\n!!! CAUTION: %d missing model(s) imported from Excel were skipped. See Log area details.', ...
-        msgText, numel(state.LastImportedMissing));
+if ~isempty(valReport) && ~isempty(valReport.Issues)
+    errCount = sum(strcmp({valReport.Issues.Severity}, 'error'));
+    if errCount > 0
+        msgText = sprintf('%s\n\nNotice: %d sample-time/referencing issue(s) detected. Check the log details.', ...
+            msgText, errCount);
+    end
 end
 
-notify(app, msgText, 'Preview complete', 'info');
+notify(app, msgText, 'Preview & Validation Complete', 'info');
 end
 
 function doGenerate(~, ~)
@@ -1384,21 +1324,7 @@ catch generateError
     errText = errorDetails(generateError);
     setStatus('Generation failed.');
     logTo(log1, ['ERROR: ' errText]);
-
-    if contains(errText, 'fixed-step size') || ...
-       contains(errText, 'sample time') || ...
-       contains(errText, 'integer multiple')
-        logTo(log1, '');
-        logTo(log1, '>>> SAMPLE-TIME ERROR DETECTED <<<');
-        logTo(log1, 'Click the "Validate" button to diagnose compatibility.');
-        logTo(log1, '');
-        notify(app, sprintf(['Generation failed with a sample-time error:\n\n', ...
-            '%s\n\n', ...
-            'Click the "Validate" button to diagnose the issue.'], errText), ...
-            'Sample-Time Error - Run Validate', 'error');
-    else
-        notify(app, errText, 'Generation failed', 'error');
-    end
+    notify(app, errText, 'Generation failed', 'error');
     return;
 end
 

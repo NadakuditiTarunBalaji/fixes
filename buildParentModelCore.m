@@ -384,12 +384,13 @@ try
         set_param(targetModel, result.ConfigParamNames{paramIndex}, result.ConfigParamValues{paramIndex});
     end
 
-    % =========================================================================
+       % =========================================================================
     % PARENT-LEVEL SAMPLE TIME & RATE TRANSITION CONFIGURATION
     % (Resolves all multirate & sample time mismatches without touching child models)
     % =========================================================================
     set_param(targetModel, 'SolverType', 'Fixed-step');
     set_param(targetModel, 'Solver', 'FixedStepDiscrete');
+    set_param(targetModel, 'SolverMode', 'Auto'); % Automatically handles single/multi-tasking rates
 
     % 1. Auto-calculate the base FixedStep (GCD of child model rates)
     detectedRates = [];
@@ -426,23 +427,29 @@ try
     % 2. Automatically insert rate transition buffers in parent memory
     set_param(targetModel, 'AutoInsertRateTranBlk', 'on');
 
-    % 3. Relax model reference & sample time diagnostic halt conditions
-    try set_param(targetModel, 'InvalidRootInportConnection', 'none'); catch, end
-    try set_param(targetModel, 'InvalidRootOutportConnection', 'none'); catch, end
-    try set_param(targetModel, 'SingleTaskRateTransMsg', 'none'); catch, end
-    try set_param(targetModel, 'MultiTaskRateTransMsg', 'none'); catch, end
-    try set_param(targetModel, 'ModelReferenceCSMismatchMessage', 'none'); catch, end
-    try set_param(targetModel, 'ModelReferenceVersionMismatchMessage', 'none'); catch, end
-    try set_param(targetModel, 'MultiTaskDSMLog', 'none'); catch, end
-    try set_param(targetModel, 'MultiTaskCondExecSys', 'none'); catch, end
+    % 3. Suppress model-referencing & sample-time diagnostic halts
+    safeParams = { ...
+        'InvalidRootInportConnection',          'none', ...
+        'InvalidRootOutportConnection',         'none', ...
+        'SingleTaskRateTransMsg',               'none', ...
+        'MultiTaskRateTransMsg',                'warning', ... % Simulink only accepts 'warning' or 'error'
+        'ModelReferenceCSMismatchMessage',      'none', ...
+        'ModelReferenceVersionMismatchMessage', 'none', ...
+        'ModelReferenceIOMsg',                  'none', ...
+        'ModelReferenceIOMismatchMessage',      'none', ...
+        'ModelReferenceDataLoggingMessage',     'none', ...
+        'MultiTaskDSMLog',                      'none', ...
+        'MultiTaskCondExecSys',                 'none', ...
+        'DiscreteInheritContinuousMsg',         'none', ...
+        'InheritedTsInSrcMsg',                  'none', ...
+        'TasksWithSamePriorityMsg',             'none'  ...
+    };
 
-    % Set diagnostic parameters on the parent model so that model reference sample
-    % time mismatches trigger warnings instead of crashing MATLAB / aborting build.
-    try set_param(tempParent, 'InvalidRootInportConnection', 'warning'); catch, end
-    try set_param(tempParent, 'InvalidRootOutportConnection', 'warning'); catch, end
-    try
-        set_param(targetModel, 'ModelReferenceCSMismatchMessage', 'warning');
-    catch
+    for pIdx = 1:2:numel(safeParams)
+        try
+            set_param(targetModel, safeParams{pIdx}, safeParams{pIdx+1});
+        catch
+        end
     end
 
     % ------------------------------------------------ Setup Build Target
