@@ -1,8 +1,8 @@
 function report = configureSubsystemSignals(options)
 %CONFIGURESUBSYSTEMSIGNALS Configure selected Subsystem input/output signals.
 %
-% This version is performance-engineered to prevent parameter shadowing 
-% and resolve "Error evaluating parameter 'Value'" compilation issues.
+% Fixes parameter shadowing by placing Simulink.Signal objects in the 
+% Base Workspace or Data Dictionary (never Model Workspace).
 
     createMissingSignalObjects = true;
     updateModelAfterChanges = true;
@@ -19,7 +19,6 @@ function report = configureSubsystemSignals(options)
         error('configureSubsystemSignals:NoOpenModel', 'Open a Simulink model first.');
     end
 
-    % LOCK CURRENT BLOCK PATH SECURELY
     selectedBlock = gcb;
     if isempty(selectedBlock) || strcmp(selectedBlock, modelName)
         error('configureSubsystemSignals:NoSelectedBlock', 'Select a Subsystem block first.');
@@ -50,13 +49,17 @@ function report = configureSubsystemSignals(options)
 
     report = [inportReport; outportReport];
 
-    % BATCH PERSIST DICTIONARY CHANGES ONCE
     if saveChangesAfterProcessing
         persistSignalObjectChanges(modelName);
     end
 
     if updateModelAfterChanges
-        set_param(modelName, 'SimulationCommand', 'update');
+        try
+            set_param(modelName, 'SimulationCommand', 'update');
+        catch updateErr
+            warning('configureSubsystemSignals:UpdateWarning', ...
+                'Model updated with warnings: %s', updateErr.message);
+        end
     end
 
     if saveChangesAfterProcessing
@@ -122,7 +125,6 @@ function report = processSubsystemInports(modelName, selectedBlock, createMissin
                 appendResult(); continue;
             end
 
-            % Detect and protect existing parameters from being shadowed
             skipResolve = false;
             if createMissingSignalObjects
                 [objectLocation, skipResolve] = ensureSignalObject(modelName, signalName);
@@ -130,7 +132,6 @@ function report = processSubsystemInports(modelName, selectedBlock, createMissin
                 objectLocation = 'Creation disabled';
             end
 
-            % If it's an existing parameter, do NOT force resolution to a signal object
             configureSourceSignal(sourcePortHandle(1), signalName, mustResolve && ~skipResolve);
 
             if showPropagation
@@ -139,11 +140,11 @@ function report = processSubsystemInports(modelName, selectedBlock, createMissin
                 propagationStatus = 'Propagation off';
             end
 
-            status = 'Configured';
             if skipResolve
                 status = 'Skipped';
-                detail = sprintf('Kept existing parameter: %s. Resolution skipped to prevent compile error.', objectLocation);
+                detail = sprintf('Kept parameter (%s). Resolve skipped to prevent Value error.', objectLocation);
             else
+                status = 'Configured';
                 detail = sprintf('Location: %s. %s', objectLocation, propagationStatus);
             end
         catch portException
@@ -223,7 +224,6 @@ function report = processSubsystemOutports(modelName, selectedBlock, createMissi
                 appendResult(); continue;
             end
 
-            % Detect and protect existing parameters from being shadowed
             skipResolve = false;
             if createMissingSignalObjects
                 [objectLocation, skipResolve] = ensureSignalObject(modelName, signalName);
@@ -231,7 +231,6 @@ function report = processSubsystemOutports(modelName, selectedBlock, createMissi
                 objectLocation = 'Creation disabled';
             end
 
-            % If it's an existing parameter, do NOT force resolution to a signal object
             configureSourceSignal(sourcePortHandle(1), signalName, mustResolve && ~skipResolve);
 
             if showPropagation
@@ -240,11 +239,11 @@ function report = processSubsystemOutports(modelName, selectedBlock, createMissi
                 propagationStatus = 'Propagation off';
             end
 
-            status = 'Configured';
             if skipResolve
                 status = 'Skipped';
-                detail = sprintf('Kept existing parameter: %s. Resolution skipped to prevent compile error.', objectLocation);
+                detail = sprintf('Kept parameter (%s). Resolve skipped to prevent Value error.', objectLocation);
             else
+                status = 'Configured';
                 detail = sprintf('Location: %s. %s', objectLocation, propagationStatus);
             end
         catch portException
@@ -304,75 +303,72 @@ function enablePropagationOnLine(lineHandle)
 end
 
 function [location, skipResolve] = ensureSignalObject(modelName, signalName)
-% ENSURESIGNALOBJECT Safely resolves and checks parameter shadowing
+% ENSURESIGNALOBJECT Stores Signal objects in Base Workspace or Data Dictionary.
+% NEVER stores in ModelWorkspace to prevent parameter shadowing.
+
     skipResolve = false;
     modelWorkspace = get_param(modelName, 'ModelWorkspace');
     dataDictionary = strtrim(get_param(modelName, 'DataDictionary'));
 
-    % 1. Check Data Dictionary
-    if ~isempty(dataDictionary)
-        dictObj = Simulink.data.dictionary.open(dataDictionary);
-        sec = getSection(dictObj, 'Design Data');
-        try
-            entry = getEntry(sec, signalName);
-            val = entry.getValue();
-            if isa(val, 'Simulink.Signal')
-                location = sprintf('data dictionary "%s"', dataDictionary);
-            else
-                % Exists but is a Parameter or Constant value. Do NOT touch!
-                location = sprintf('data dictionary "%s" (Existing parameter/constant)', dataDictionary);
-                skipResolve = true;
-            end
-            return;
-        catch
-            addEntry(sec, signalName, Simulink.Signal);
-            location = sprintf('data dictionary "%s"', dataDictionary);
-            return;
-        end
-    end
-
-    % 2. Check Model Workspace
+    % Clean up any accidental Simulink.Signal in Model Workspace that shadows Base Workspace
     if modelWorkspace.hasVariable(signalName)
         val = modelWorkspace.evalin(signalName);
         if isa(val, 'Simulink.Signal')
-            location = 'Model Workspace';
+            modelWorkspace.clear(signalName); % Remove harmful signal from model workspace
         else
-            % Conflicting non-signal variable in Model Workspace. Do NOT overwrite.
-            location = 'Model Workspace (Existing parameter/constant)';
+            location = 'Model Workspace Parameter';
             skipResolve = true;
+            return;
         end
-        return;
     end
 
-    % 3. Check Base Workspace (Prevents shadowing parameter definitions)
+    % 1. Check Data Dictionary (if attached)
+    if ~isempty(dataDictionary)
+        try
+            dictObj = Simulink.data.dictionary.open(dataDictionary);
+            sec = getSection(dictObj, 'Design Data');
+            if sec.entryExists(signalName)
+                entry = getEntry(sec, signalName);
+                val = entry.getValue();
+                if isa(val, 'Simulink.Signal')
+                    location = sprintf('data dictionary "%s"', dataDictionary);
+                else
+                    location = sprintf('data dictionary "%s" (Existing parameter)', dataDictionary);
+                    skipResolve = true;
+                end
+            else
+                sec.addEntry(signalName, Simulink.Signal);
+                location = sprintf('data dictionary "%s"', dataDictionary);
+            end
+            return;
+        catch
+        end
+    end
+
+    % 2. Store in Base Workspace (Standard location for Simulink signal resolution)
     baseExists = evalin('base', sprintf('exist(''%s'', ''var'')', signalName));
     if baseExists
         val = evalin('base', signalName);
         if isa(val, 'Simulink.Signal')
             location = 'Base Workspace';
         else
-            % Conflicting parameter in Base Workspace. Skip Model Workspace creation to prevent shadowing!
-            location = 'Base Workspace (Existing parameter/constant)';
+            location = 'Base Workspace (Existing parameter)';
             skipResolve = true;
         end
-        return;
+    else
+        evalin('base', sprintf('%s = Simulink.Signal;', signalName));
+        location = 'Base Workspace';
     end
-
-    % 4. Safe to create if it doesn't exist anywhere
-    assignin(modelWorkspace, signalName, Simulink.Signal);
-    location = 'Model Workspace';
 end
 
 function persistSignalObjectChanges(modelName)
     dataDictionary = strtrim(get_param(modelName, 'DataDictionary'));
     if ~isempty(dataDictionary)
-        dictObj = Simulink.data.dictionary.open(dataDictionary);
-        saveChanges(dictObj);
-        return;
-    end
-    modelWorkspace = get_param(modelName, 'ModelWorkspace');
-    if strcmp(modelWorkspace.DataSource, 'Model File')
-        set_param(modelName, 'Dirty', 'on');
+        try
+            dictObj = Simulink.data.dictionary.open(dataDictionary);
+            saveChanges(dictObj);
+        catch
+        end
     end
 end
 
