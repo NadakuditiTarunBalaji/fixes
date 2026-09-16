@@ -1,8 +1,8 @@
 function report = configureSubsystemSignals(options)
 %CONFIGURESUBSYSTEMSIGNALS Configure selected Subsystem input/output signals.
 %
-% Properly resolves and displays propagated signal names (<signal_name>)
-% inside Inports and outside Outports.
+% Resolves signal propagation (<signal_name>) and eliminates duplicate
+% symbol definition conflicts across Model Workspace, Base Workspace, and SLDD.
 
     createMissingSignalObjects = true;
     updateModelAfterChanges = true;
@@ -53,12 +53,12 @@ function report = configureSubsystemSignals(options)
         persistSignalObjectChanges(modelName);
     end
 
-    % CRITICAL: Update diagram forces Simulink to resolve <> into <signal_name>
+    % CRITICAL: Forces Simulink to compile and convert all <> into <signal_name>
     if updateModelAfterChanges
         try
             set_param(modelName, 'SimulationCommand', 'update');
         catch updateErr
-            fprintf(2, 'Note: Update diagram reported: %s\nPress Ctrl+D in the model to refresh labels.\n', updateErr.message);
+            fprintf(2, 'Update notice: %s\n', updateErr.message);
         end
     end
 
@@ -125,38 +125,31 @@ function report = processSubsystemInports(modelName, selectedBlock, createMissin
                 appendResult(); continue;
             end
 
-            skipResolve = false;
+            % Ensure single consistent definition (Base Workspace or SLDD)
+            objectLocation = '';
             if createMissingSignalObjects
-                [objectLocation, skipResolve] = ensureSignalObject(modelName, signalName);
-            else
-                objectLocation = 'Creation disabled';
+                objectLocation = ensureSingleSignalDefinition(modelName, signalName);
             end
 
-            % 1. Name the upstream source port
-            configureSourceSignal(sourcePortHandle(1), signalName, mustResolve && ~skipResolve);
+            % 1. Set name and MustResolve on the true external source port
+            configureSourceSignal(sourcePortHandle(1), signalName, mustResolve);
 
-            % 2. Name the external line feeding the subsystem so signal name propagates inward
-            try
-                if externalLineHandle > 0
-                    set_param(externalLineHandle, 'Name', signalName);
+            % 2. Ensure external line is named so the name flows into the subsystem Inport
+            for lIdx = 1:numel(externalLineHandle)
+                if externalLineHandle(lIdx) > 0 && ishandle(externalLineHandle(lIdx))
+                    try set_param(externalLineHandle(lIdx), 'Name', signalName); catch; end
                 end
-            catch
             end
 
-            % 3. Enable propagation on the internal line leaving the inport
+            % 3. Force propagation on the internal line leaving the inport
             if showPropagation
                 propagationStatus = enablePropagationAfterInternalInport(internalInport);
             else
                 propagationStatus = 'Propagation off';
             end
 
-            if skipResolve
-                status = 'Skipped';
-                detail = sprintf('Kept parameter (%s). Resolve skipped to prevent Value error.', objectLocation);
-            else
-                status = 'Configured';
-                detail = sprintf('Location: %s. %s', objectLocation, propagationStatus);
-            end
+            status = 'Configured';
+            detail = sprintf('Location: %s. %s', objectLocation, propagationStatus);
         catch portException
             status = 'Failed'; detail = portException.message;
         end
@@ -234,38 +227,31 @@ function report = processSubsystemOutports(modelName, selectedBlock, createMissi
                 appendResult(); continue;
             end
 
-            skipResolve = false;
+            % Ensure single consistent definition (Base Workspace or SLDD)
+            objectLocation = '';
             if createMissingSignalObjects
-                [objectLocation, skipResolve] = ensureSignalObject(modelName, signalName);
-            else
-                objectLocation = 'Creation disabled';
+                objectLocation = ensureSingleSignalDefinition(modelName, signalName);
             end
 
-            % 1. Name the internal source port
-            configureSourceSignal(sourcePortHandle(1), signalName, mustResolve && ~skipResolve);
+            % 1. Set name and MustResolve on the internal source port
+            configureSourceSignal(sourcePortHandle(1), signalName, mustResolve);
 
-            % 2. Name the internal line entering the outport
-            try
-                if internalLineHandle > 0
-                    set_param(internalLineHandle, 'Name', signalName);
+            % 2. Set name on internal line feeding the outport
+            for lIdx = 1:numel(internalLineHandle)
+                if internalLineHandle(lIdx) > 0 && ishandle(internalLineHandle(lIdx))
+                    try set_param(internalLineHandle(lIdx), 'Name', signalName); catch; end
                 end
-            catch
             end
 
-            % 3. Enable propagation on the external line leaving the subsystem outport
+            % 3. Force propagation on the external line leaving the Subsystem Outport
             if showPropagation
                 propagationStatus = enablePropagationAfterSubsystemOutport(externalOutports(portNumber));
             else
                 propagationStatus = 'Propagation off';
             end
 
-            if skipResolve
-                status = 'Skipped';
-                detail = sprintf('Kept parameter (%s). Resolve skipped to prevent Value error.', objectLocation);
-            else
-                status = 'Configured';
-                detail = sprintf('Location: %s. %s', objectLocation, propagationStatus);
-            end
+            status = 'Configured';
+            detail = sprintf('Location: %s. %s', objectLocation, propagationStatus);
         catch portException
             status = 'Failed'; detail = portException.message;
         end
@@ -314,17 +300,18 @@ function propagationStatus = enablePropagationAfterSubsystemOutport(externalOutp
     propagationStatus = 'Propagation on';
 end
 
-function enablePropagationOnLine(lineHandle)
-    if isempty(lineHandle) || any(lineHandle == -1)
+function enablePropagationOnLine(lineHandles)
+    if isempty(lineHandles)
         return;
     end
-    for k = 1:numel(lineHandle)
-        h = lineHandle(k);
+    for k = 1:numel(lineHandles)
+        h = lineHandles(k);
         if h > 0 && ishandle(h)
             try
-                % Clear any explicit string so propagation takes over
+                % Clear explicit name so Simulink forces propagated display
                 set_param(h, 'Name', '');
-                % Turn on signal propagation display
+                % Cycle propagation setting to force immediate UI refresh
+                set_param(h, 'ShowPropagatedSignals', 'off');
                 set_param(h, 'ShowPropagatedSignals', 'on');
             catch
             end
@@ -332,35 +319,29 @@ function enablePropagationOnLine(lineHandle)
     end
 end
 
-function [location, skipResolve] = ensureSignalObject(modelName, signalName)
-    skipResolve = false;
+function location = ensureSingleSignalDefinition(modelName, signalName)
+% ENSURESINGLESIGNALDEFINITION Enforces a single consistent definition.
+% 1. Automatically purges duplicate Simulink.Signal from ModelWorkspace.
+% 2. Stores signal in Data Dictionary (if attached) OR Base Workspace.
+
     modelWorkspace = get_param(modelName, 'ModelWorkspace');
     dataDictionary = strtrim(get_param(modelName, 'DataDictionary'));
 
+    % STEP 1: Purge any conflicting signal object in Model Workspace
     if modelWorkspace.hasVariable(signalName)
         val = modelWorkspace.evalin(signalName);
         if isa(val, 'Simulink.Signal')
-            modelWorkspace.clear(signalName);
-        else
-            location = 'Model Workspace Parameter';
-            skipResolve = true;
-            return;
+            modelWorkspace.clear(signalName); % Remove duplicate definition
         end
     end
 
+    % STEP 2: Handle Data Dictionary (if attached)
     if ~isempty(dataDictionary)
         try
             dictObj = Simulink.data.dictionary.open(dataDictionary);
             sec = getSection(dictObj, 'Design Data');
             if sec.entryExists(signalName)
-                entry = getEntry(sec, signalName);
-                val = entry.getValue();
-                if isa(val, 'Simulink.Signal')
-                    location = sprintf('data dictionary "%s"', dataDictionary);
-                else
-                    location = sprintf('data dictionary "%s" (Existing parameter)', dataDictionary);
-                    skipResolve = true;
-                end
+                location = sprintf('data dictionary "%s"', dataDictionary);
             else
                 sec.addEntry(signalName, Simulink.Signal);
                 location = sprintf('data dictionary "%s"', dataDictionary);
@@ -370,14 +351,14 @@ function [location, skipResolve] = ensureSignalObject(modelName, signalName)
         end
     end
 
+    % STEP 3: Handle Base Workspace (Standard location for Signal Resolution)
     baseExists = evalin('base', sprintf('exist(''%s'', ''var'')', signalName));
     if baseExists
         val = evalin('base', signalName);
         if isa(val, 'Simulink.Signal')
             location = 'Base Workspace';
         else
-            location = 'Base Workspace (Existing parameter)';
-            skipResolve = true;
+            location = 'Base Workspace (Pre-existing parameter)';
         end
     else
         evalin('base', sprintf('%s = Simulink.Signal;', signalName));
