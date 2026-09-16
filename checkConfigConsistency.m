@@ -28,7 +28,8 @@ if numModels < 2
     return;
 end
 
-CHECKED_PARAMS = {'SolverType', 'Solver'};
+CHECKED_PARAMS = {'SolverType', 'Solver', 'FixedStep', ...
+    'UseDivisionForNetSlopeComputation'};
 
 paramValues = containers.Map('KeyType', 'char', 'ValueType', 'any');
 for p = 1:numel(CHECKED_PARAMS)

@@ -427,7 +427,8 @@ try
     set_param(targetModel, 'AutoInsertRateTranBlk', 'on');
 
     % 3. Relax model reference & sample time diagnostic halt conditions
-    set_param(targetModel, 'InvalidRootInportOutportConnection', 'none');
+    try set_param(targetModel, 'InvalidRootInportConnection', 'none'); catch, end
+    try set_param(targetModel, 'InvalidRootOutportConnection', 'none'); catch, end
     set_param(targetModel, 'SingleTaskRateTransMsg', 'none');
     set_param(targetModel, 'MultiTaskRateTransMsg', 'none');
     set_param(targetModel, 'ModelReferenceCSMismatchMessage', 'none');
@@ -437,10 +438,8 @@ try
 
     % Set diagnostic parameters on the parent model so that model reference sample
     % time mismatches trigger warnings instead of crashing MATLAB / aborting build.
-    try
-        set_param(targetModel, 'InvalidRootInportOutportConnection', 'warning');
-    catch
-    end
+    try set_param(tempParent, 'InvalidRootInportConnection', 'warning'); catch, end
+    try set_param(tempParent, 'InvalidRootOutportConnection', 'warning'); catch, end
     try
         set_param(targetModel, 'ModelReferenceCSMismatchMessage', 'warning');
     catch
