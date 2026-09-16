@@ -1,8 +1,8 @@
 function report = configureSubsystemSignals(options)
 %CONFIGURESUBSYSTEMSIGNALS Configure selected Subsystem input/output signals.
 %
-% Fixes parameter shadowing by placing Simulink.Signal objects in the 
-% Base Workspace or Data Dictionary (never Model Workspace).
+% Properly resolves and displays propagated signal names (<signal_name>)
+% inside Inports and outside Outports.
 
     createMissingSignalObjects = true;
     updateModelAfterChanges = true;
@@ -53,12 +53,12 @@ function report = configureSubsystemSignals(options)
         persistSignalObjectChanges(modelName);
     end
 
+    % CRITICAL: Update diagram forces Simulink to resolve <> into <signal_name>
     if updateModelAfterChanges
         try
             set_param(modelName, 'SimulationCommand', 'update');
         catch updateErr
-            warning('configureSubsystemSignals:UpdateWarning', ...
-                'Model updated with warnings: %s', updateErr.message);
+            fprintf(2, 'Note: Update diagram reported: %s\nPress Ctrl+D in the model to refresh labels.\n', updateErr.message);
         end
     end
 
@@ -132,8 +132,18 @@ function report = processSubsystemInports(modelName, selectedBlock, createMissin
                 objectLocation = 'Creation disabled';
             end
 
+            % 1. Name the upstream source port
             configureSourceSignal(sourcePortHandle(1), signalName, mustResolve && ~skipResolve);
 
+            % 2. Name the external line feeding the subsystem so signal name propagates inward
+            try
+                if externalLineHandle > 0
+                    set_param(externalLineHandle, 'Name', signalName);
+                end
+            catch
+            end
+
+            % 3. Enable propagation on the internal line leaving the inport
             if showPropagation
                 propagationStatus = enablePropagationAfterInternalInport(internalInport);
             else
@@ -231,8 +241,18 @@ function report = processSubsystemOutports(modelName, selectedBlock, createMissi
                 objectLocation = 'Creation disabled';
             end
 
+            % 1. Name the internal source port
             configureSourceSignal(sourcePortHandle(1), signalName, mustResolve && ~skipResolve);
 
+            % 2. Name the internal line entering the outport
+            try
+                if internalLineHandle > 0
+                    set_param(internalLineHandle, 'Name', signalName);
+                end
+            catch
+            end
+
+            % 3. Enable propagation on the external line leaving the subsystem outport
             if showPropagation
                 propagationStatus = enablePropagationAfterSubsystemOutport(externalOutports(portNumber));
             else
@@ -295,26 +315,32 @@ function propagationStatus = enablePropagationAfterSubsystemOutport(externalOutp
 end
 
 function enablePropagationOnLine(lineHandle)
-    try
-        set_param(lineHandle, 'ShowPropagatedSignals', 'on');
-    catch
-        try set_param(lineHandle, 'Name', '<'); catch; end
+    if isempty(lineHandle) || any(lineHandle == -1)
+        return;
+    end
+    for k = 1:numel(lineHandle)
+        h = lineHandle(k);
+        if h > 0 && ishandle(h)
+            try
+                % Clear any explicit string so propagation takes over
+                set_param(h, 'Name', '');
+                % Turn on signal propagation display
+                set_param(h, 'ShowPropagatedSignals', 'on');
+            catch
+            end
+        end
     end
 end
 
 function [location, skipResolve] = ensureSignalObject(modelName, signalName)
-% ENSURESIGNALOBJECT Stores Signal objects in Base Workspace or Data Dictionary.
-% NEVER stores in ModelWorkspace to prevent parameter shadowing.
-
     skipResolve = false;
     modelWorkspace = get_param(modelName, 'ModelWorkspace');
     dataDictionary = strtrim(get_param(modelName, 'DataDictionary'));
 
-    % Clean up any accidental Simulink.Signal in Model Workspace that shadows Base Workspace
     if modelWorkspace.hasVariable(signalName)
         val = modelWorkspace.evalin(signalName);
         if isa(val, 'Simulink.Signal')
-            modelWorkspace.clear(signalName); % Remove harmful signal from model workspace
+            modelWorkspace.clear(signalName);
         else
             location = 'Model Workspace Parameter';
             skipResolve = true;
@@ -322,7 +348,6 @@ function [location, skipResolve] = ensureSignalObject(modelName, signalName)
         end
     end
 
-    % 1. Check Data Dictionary (if attached)
     if ~isempty(dataDictionary)
         try
             dictObj = Simulink.data.dictionary.open(dataDictionary);
@@ -345,7 +370,6 @@ function [location, skipResolve] = ensureSignalObject(modelName, signalName)
         end
     end
 
-    % 2. Store in Base Workspace (Standard location for Simulink signal resolution)
     baseExists = evalin('base', sprintf('exist(''%s'', ''var'')', signalName));
     if baseExists
         val = evalin('base', signalName);
