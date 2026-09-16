@@ -146,15 +146,12 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         end
 
         % --- STEP 4: Compile parent model (Run Simulink Engine once) --------
-        progressFcn(0.70, 'Compiling referenced hierarchy (Simulink compilation phase)...');
-        
-        warnState = warning('query');
-        warning('error', 'Simulink:Engine:*');
-        warning('error', 'Simulink:blocks:*');
-
+        % --- STEP 4: Single Multi-threaded Simulink Compile -----------------
+        progressFcn(0.70, 'Compiling referenced hierarchy...');
         compileErrors = {};
+        
         try
-            % This single action forces Simulink to resolve and check all 200+ models
+            % Simulink update diagram automatically captures all referencing errors
             set_param(tempParent, 'SimulationCommand', 'update');
         catch compileErr
             compileErrors{end + 1} = compileErr.message; %#ok<AGROW>
@@ -165,7 +162,6 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
                 end
             end
         end
-        warning(warnState);
 
         % --- STEP 5: Fast parsing of compilation logs ---------------------
         progressFcn(0.90, 'Analyzing compilation results...');
