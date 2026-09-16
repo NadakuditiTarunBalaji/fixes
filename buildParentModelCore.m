@@ -429,12 +429,12 @@ try
     % 3. Relax model reference & sample time diagnostic halt conditions
     try set_param(targetModel, 'InvalidRootInportConnection', 'none'); catch, end
     try set_param(targetModel, 'InvalidRootOutportConnection', 'none'); catch, end
-    set_param(targetModel, 'SingleTaskRateTransMsg', 'none');
-    set_param(targetModel, 'MultiTaskRateTransMsg', 'none');
-    set_param(targetModel, 'ModelReferenceCSMismatchMessage', 'none');
-    set_param(targetModel, 'ModelReferenceVersionMismatchMessage', 'none');
-    set_param(targetModel, 'MultiTaskDSMLog', 'none');
-    set_param(targetModel, 'MultiTaskCondExecSys', 'none');
+    try set_param(targetModel, 'SingleTaskRateTransMsg', 'none'); catch, end
+    try set_param(targetModel, 'MultiTaskRateTransMsg', 'none'); catch, end
+    try set_param(targetModel, 'ModelReferenceCSMismatchMessage', 'none'); catch, end
+    try set_param(targetModel, 'ModelReferenceVersionMismatchMessage', 'none'); catch, end
+    try set_param(targetModel, 'MultiTaskDSMLog', 'none'); catch, end
+    try set_param(targetModel, 'MultiTaskCondExecSys', 'none'); catch, end
 
     % Set diagnostic parameters on the parent model so that model reference sample
     % time mismatches trigger warnings instead of crashing MATLAB / aborting build.
