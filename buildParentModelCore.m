@@ -415,15 +415,40 @@ try
     % =========================================================================
     set_param(targetModel, 'SolverType', 'Fixed-step');
     set_param(targetModel, 'Solver', 'FixedStepDiscrete');
-    % set_param(targetModel, 'SolverMode', 'Auto');
-    set_param(targetModel, 'SolverMode', 'MultiTasking');
 
-    % 1. Auto-calculate the base FixedStep (GCD of child model rates)
+    % >>> FIX B: Read SolverMode from child models and match it.
+    % Default to SingleTasking to avoid rate-transition and data-integrity
+    % errors when no Rate Transition blocks are desired.
+    childSolverModes = {};
+    for mIdx = 1:numel(modelNames)
+        try
+            childSolverModes{end+1} = get_param(modelNames{mIdx}, 'SolverMode'); %#ok<AGROW>
+        catch
+            childSolverModes{end+1} = 'Auto'; %#ok<AGROW>
+        end
+    end
+    
+    % If ANY child is explicitly MultiTasking, use MultiTasking and propagate.
+    % Otherwise, use SingleTasking (safest for zero-block-insertion).
+    if any(strcmpi(childSolverModes, 'MultiTasking'))
+        parentSolverMode = 'MultiTasking';
+        % Propagate to all children so they match the parent
+        for mIdx = 1:numel(modelNames)
+            try
+                set_param(modelNames{mIdx}, 'SolverMode', 'MultiTasking');
+            catch
+            end
+        end
+    else
+        parentSolverMode = 'SingleTasking';
+    end
+    set_param(targetModel, 'SolverMode', parentSolverMode);
+    % <<< END FIX B
+
+    % Auto-calculate the base FixedStep (GCD of child model rates)
     detectedRates = [];
     if isfield(result, 'Models') && ~isempty(result.Models)
         modelListToCheck = {result.Models.Name};
-    % elseif exist('models', 'var') && iscell(models)
-    %     modelListToCheck = models;
     else
         modelListToCheck = {};
     end
@@ -449,11 +474,10 @@ try
         set_param(targetModel, 'FixedStep', '0.001');
     end
 
-    % >>> FIX 1: Disable auto-insertion of Rate Transition blocks
+    % No Rate Transition blocks — ever
     set_param(targetModel, 'AutoInsertRateTranBlk', 'off');
-    % <<< END FIX 1
 
-    % 3. Suppress model-referencing & sample-time diagnostic halts
+    % Suppress all rate-transition and model-reference diagnostics
     safeParams = { ...
         'InvalidRootInportConnection',          'none', ...
         'InvalidRootOutportConnection',         'none', ...
