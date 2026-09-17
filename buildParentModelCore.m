@@ -685,6 +685,7 @@ try
                     delayName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
                     delayLeft = fromRight + fromToDelayGap;
                     add_block('built-in/UnitDelay', [containerSystem '/' delayName], ...
+                        'sampletime', '-1', ...
                         'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]);
                     if colorBlocks && isKey(firstProducerOrder, key)
                         set_param([containerSystem '/' delayName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
@@ -825,7 +826,7 @@ try
                 if dLeft < srcPos(3) + blockSpacing, dLeft = round((srcPos(3) + dstPos(1)) / 2) - 20; end
                 dY = round(dstPos(2));
                 dName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
-                add_block('built-in/UnitDelay', [containerSystem '/' dName], 'Position', [dLeft, dY - 10, dLeft + 40, dY + 10]);
+                add_block('built-in/UnitDelay', [containerSystem '/' dName], 'SampleTime', '-1', 'Position', [dLeft, dY - 10, dLeft + 40, dY + 10]);
                 dPorts = get_param([containerSystem '/' dName], 'PortHandles');
                 addLineRouted(containerSystem, routeMode, srcH, dPorts.Inport(1));
                 addLineRouted(containerSystem, routeMode, dPorts.Outport(1), dstH);
