@@ -20,6 +20,7 @@ options = fillDefaults(options, struct( ...
     'ColorBlocks',           false, ...
     'AutoDelayFeedback',     false, ...
     'AllowMultipleInstances',       true, ...   % <<< NEW: Allows same model to be referenced multiple times
+    'ForceInheritedSampleTimes',    false, ...   % <<< NEW: default OFF
     'BlockSpacing',          100, ...
     'FromModelGap',          [], ...
     'ModelGotoGap',          [], ...
@@ -963,17 +964,62 @@ try
     % =========================================================================
     % GLOBAL SWEEP: Enforce Inherited Sample Time (-1) on All Levels of Ports
     % =========================================================================
-    progressFcn(0.97, 'Enforcing inherited sample times (-1) on all levels of ports...');
-    
-    % Sweep parent model (including wrapper subsystems)
-    forceInheritedSampleTime(targetModel);
-    
-    % Sweep and automatically save child models
-    for mIdx = 1:numModels
-        mdlName = modelNames{mIdx};
-        forceInheritedSampleTime(mdlName);
-        if bdIsDirty(mdlName)
-            save_system(mdlName);
+    % =========================================================================
+    % OPTIONAL: FORCE INHERITED SAMPLE TIMES (-1) ACROSS PARENT + CHILD MODELS
+    % =========================================================================
+    if options.ForceInheritedSampleTimes
+        progressFcn(0.97, 'Collecting sample-time changes...');
+        
+        % STEP 1: Scan and collect all pending changes (batch mode)
+        allChanges = {};
+        allChanges = [allChanges; collectSampleTimeChanges(targetModel)];
+        for mIdx = 1:numModels
+            allChanges = [allChanges; collectSampleTimeChanges(modelNames{mIdx})]; %#ok<AGROW>
+        end
+        
+        % STEP 2: Log the full report BEFORE applying any change
+        if isempty(allChanges)
+            result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
+            result.Notes{end + 1} = 'No blocks required sample-time change (all already at -1 or inherited).';
+            result.Notes{end + 1} = '=========================================================';
+        else
+            headerLine = '================== SAMPLE TIME CHANGES ==================';
+            footerLine = '=========================================================';
+            result.Notes{end + 1} = headerLine;
+            for cIdx = 1:numel(allChanges)
+                ch = allChanges{cIdx};
+                logLine = sprintf('[%s] %s (%s) ''%s'' -> ''-1''', ...
+                    ch.ModelName, ch.BlockPath, ch.BlockType, ch.OldValue);
+                result.Notes{end + 1} = logLine; %#ok<AGROW>
+            end
+            summaryLine = sprintf('Total: %d block(s) will be changed to SampleTime = -1', numel(allChanges));
+            result.Notes{end + 1} = summaryLine;
+            result.Notes{end + 1} = footerLine;
+            
+            % STEP 3: Apply all changes now
+            progressFcn(0.975, sprintf('Applying %d sample-time changes...', numel(allChanges)));
+            for cIdx = 1:numel(allChanges)
+                ch = allChanges{cIdx};
+                try
+                    set_param(ch.BlockPath, 'SampleTime', '-1');
+                catch applyErr
+                    result.Warnings{end + 1} = sprintf( ...
+                        'Failed to set SampleTime on %s: %s', ch.BlockPath, applyErr.message); %#ok<AGROW>
+                end
+            end
+            
+            % STEP 4: Save any modified child models
+            for mIdx = 1:numModels
+                mdlName = modelNames{mIdx};
+                if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
+                    try
+                        save_system(mdlName);
+                    catch saveErr
+                        result.Warnings{end + 1} = sprintf( ...
+                            'Failed to save child model "%s": %s', mdlName, saveErr.message); %#ok<AGROW>
+                    end
+                end
+            end
         end
     end
 
@@ -1034,11 +1080,60 @@ end
 % =========================================================================
 %  Local functions
 % =========================================================================
-function forceInheritedSampleTime(sys)
-% forceInheritedSampleTime Recursively overrides all Inports & Outports to -1
+function changes = collectSampleTimeChanges(sys)
+% collectSampleTimeChanges Scans a system and returns a cell array of pending
+% sample-time changes for Inports, Outports, and UnitDelays whose current
+% SampleTime is NOT already '-1'.
+    changes = {};
+    
     if ~bdIsLoaded(sys)
-        load_system(sys);
+        try
+            load_system(sys);
+        catch
+            return;
+        end
     end
+    
+    % Unlock model if locked
+    try
+        if strcmp(get_param(sys, 'Lock'), 'on')
+            set_param(sys, 'Lock', 'off');
+        end
+    catch
+    end
+    
+    % Scan Inports, Outports, and UnitDelays
+    blockTypes = {'Inport', 'Outport', 'UnitDelay'};
+    for bIdx = 1:numel(blockTypes)
+        btype = blockTypes{bIdx};
+        try
+            blocks = find_system(sys, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', btype);
+        catch
+            blocks = {};
+        end
+        
+        for idx = 1:numel(blocks)
+            blkPath = blocks{idx};
+            try
+                oldValue = strtrim(char(get_param(blkPath, 'SampleTime')));
+            catch
+                continue;
+            end
+            
+            % Skip blocks that are already at -1
+            if strcmp(oldValue, '-1')
+                continue;
+            end
+            
+            % Record the pending change
+            changes{end + 1, 1} = struct( ...
+                'ModelName', sys, ...
+                'BlockPath', blkPath, ...
+                'BlockType', btype, ...
+                'OldValue',  oldValue); %#ok<AGROW>
+        end
+    end
+end
     
     % Unlock model if it's locked (e.g. library block)
     isLocked = strcmp(get_param(sys, 'Lock'), 'on');
