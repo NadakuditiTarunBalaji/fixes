@@ -415,14 +415,15 @@ try
     % =========================================================================
     set_param(targetModel, 'SolverType', 'Fixed-step');
     set_param(targetModel, 'Solver', 'FixedStepDiscrete');
-    set_param(targetModel, 'SolverMode', 'Auto');
+    % set_param(targetModel, 'SolverMode', 'Auto');
+    set_param(targetModel, 'SolverMode', 'MultiTasking');
 
     % 1. Auto-calculate the base FixedStep (GCD of child model rates)
     detectedRates = [];
     if isfield(result, 'Models') && ~isempty(result.Models)
         modelListToCheck = {result.Models.Name};
-    elseif exist('models', 'var') && iscell(models)
-        modelListToCheck = models;
+    % elseif exist('models', 'var') && iscell(models)
+    %     modelListToCheck = models;
     else
         modelListToCheck = {};
     end
@@ -457,7 +458,7 @@ try
         'InvalidRootInportConnection',          'none', ...
         'InvalidRootOutportConnection',         'none', ...
         'SingleTaskRateTransMsg',               'none', ...
-        'MultiTaskRateTransMsg',                'warning', ...
+        'MultiTaskRateTransMsg',                'none', ...
         'ModelReferenceCSMismatchMessage',      'none', ...
         'ModelReferenceVersionMismatchMessage', 'none', ...
         'ModelReferenceIOMsg',                  'none', ...
