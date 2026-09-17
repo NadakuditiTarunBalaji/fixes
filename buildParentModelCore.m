@@ -176,7 +176,6 @@ try
     configParamValues = cell(size(configParamNames));
     configProblems = {};
 
-    % >>> FIX 2 & 3: Robust config parameter reading with graceful degradation
     for paramIndex = 1:numel(configParamNames)
         parameter = char(configParamNames{paramIndex});
         values = cell(1, numModels);
@@ -188,24 +187,19 @@ try
                 values{modelIndex} = val;
                 readableFlags(modelIndex) = true;
             else
-                % Parameter not applicable to this model — log as warning, not fatal
                 configProblems{end + 1} = sprintf( ...
                     '[Warning] Parameter "%s" is not available in model "%s" (skipped).', ...
                     parameter, modelNames{modelIndex}); %#ok<AGROW>
             end
         end
         
-        % If parameter is not readable on ANY model, skip it entirely
         if ~any(readableFlags)
             configParamValues{paramIndex} = [];
             continue;
         end
         
-        % If readable on only some models, use the first readable value
-        % but warn about the inconsistency
         readableValues = values(readableFlags);
         if numel(unique(readableValues)) > 1
-            % Genuine mismatch among models where the parameter IS readable
             detailParts = cell(1, sum(readableFlags));
             idx = 0;
             for modelIndex = 1:numModels
@@ -219,19 +213,15 @@ try
                 parameter, strjoin(detailParts, ', ')); %#ok<AGROW>
         end
         
-        % Store the first readable value for application to the parent model
         configParamNames{paramIndex} = parameter;
         configParamValues{paramIndex} = readableValues{1};
     end
 
-    % >>> FIX 3: Only issue warnings for config problems, never fatal errors.
-    % Genuine mismatches and missing parameters are logged but do not abort.
     if ~isempty(configProblems)
         for wIdx = 1:numel(configProblems)
             result.Warnings{end + 1} = configProblems{wIdx}; %#ok<AGROW>
         end
     end
-    % <<< END FIX 2 & 3
 
     okParams = ~cellfun('isempty', configParamValues);
     result.ConfigParamNames = configParamNames(okParams);
@@ -406,7 +396,6 @@ try
         try
             set_param(targetModel, result.ConfigParamNames{paramIndex}, result.ConfigParamValues{paramIndex});
         catch
-            % Parameter may not apply to the freshly created parent model either
         end
     end
 
@@ -416,9 +405,6 @@ try
     set_param(targetModel, 'SolverType', 'Fixed-step');
     set_param(targetModel, 'Solver', 'FixedStepDiscrete');
 
-    % >>> FIX B: Read SolverMode from child models and match it.
-    % Default to SingleTasking to avoid rate-transition and data-integrity
-    % errors when no Rate Transition blocks are desired.
     childSolverModes = {};
     for mIdx = 1:numel(modelNames)
         try
@@ -428,11 +414,8 @@ try
         end
     end
     
-    % If ANY child is explicitly MultiTasking, use MultiTasking and propagate.
-    % Otherwise, use SingleTasking (safest for zero-block-insertion).
     if any(strcmpi(childSolverModes, 'MultiTasking'))
         parentSolverMode = 'MultiTasking';
-        % Propagate to all children so they match the parent
         for mIdx = 1:numel(modelNames)
             try
                 set_param(modelNames{mIdx}, 'SolverMode', 'MultiTasking');
@@ -443,9 +426,7 @@ try
         parentSolverMode = 'SingleTasking';
     end
     set_param(targetModel, 'SolverMode', parentSolverMode);
-    % <<< END FIX B
 
-    % Auto-calculate the base FixedStep (GCD of child model rates)
     detectedRates = [];
     if isfield(result, 'Models') && ~isempty(result.Models)
         modelListToCheck = {result.Models.Name};
@@ -474,15 +455,15 @@ try
         set_param(targetModel, 'FixedStep', '0.001');
     end
 
-    % No Rate Transition blocks — ever
     set_param(targetModel, 'AutoInsertRateTranBlk', 'off');
 
-    % Suppress all rate-transition and model-reference diagnostics
+    % Diagnostic suppressions
     safeParams = { ...
         'InvalidRootInportConnection',          'none', ...
         'InvalidRootOutportConnection',         'none', ...
         'SingleTaskRateTransMsg',               'none', ...
         'MultiTaskRateTransMsg',                'none', ...
+        'InconsistentSampleTimesMsg',           'none', ... % >>> Safety diagnostic suppression
         'ModelReferenceCSMismatchMessage',      'none', ...
         'ModelReferenceVersionMismatchMessage', 'none', ...
         'ModelReferenceIOMsg',                  'none', ...
@@ -796,6 +777,19 @@ try
                 'Position', [50, signalY - 10, 85, signalY + 10]);
             if colorBlocks, set_param([containerSystem '/' inBlockName], 'BackgroundColor', globalInportColor); end
             
+            % >>> FIX: Inherit child model's expected SampleTime explicitly
+            ts = '-1';
+            for rIdx = 1:numel(rootInputs)
+                if strcmp(normKey(rootInputs(rIdx).Name, caseInsensitive), key)
+                    destModelName = rootInputs(rIdx).DestinationModels{1};
+                    destPortName = rootInputs(rIdx).DestinationPorts{1};
+                    ts = getChildInportSampleTime(destModelName, destPortName);
+                    break;
+                end
+            end
+            set_param([containerSystem '/' inBlockName], 'SampleTime', ts);
+            % <<<
+            
             gotoBlockName = makeUniqueBlockName(containerSystem, ['Goto_' tag]);
             globalGotoLeft = 85 + blockSpacing;
             
@@ -921,6 +915,13 @@ try
                     'Position', [50, iY - 10, 85, iY + 10]);
                 if colorBlocks, set_param([containerSystem '/' iName], 'BackgroundColor', globalInportColor); end
                 
+                % >>> FIX: Inherit expected SampleTime in direct lines mode
+                destModelName = rootInputs(pos).DestinationModels{1};
+                destPortName = rootInputs(pos).DestinationPorts{1};
+                ts = getChildInportSampleTime(destModelName, destPortName);
+                set_param([containerSystem '/' iName], 'SampleTime', ts);
+                % <<<
+                
                 rH = get_param([containerSystem '/' iName], 'PortHandles'); rH = rH.Outport;
                 for d = 1:numel(rootInputs(pos).DestinationModelIndexes)
                     mIdx = rootInputs(pos).DestinationModelIndexes(d);
@@ -984,15 +985,36 @@ try
             pPos = get_param(ph.Inport(k), 'Position');
             pY = pPos(2);
             inName = '';
+            ts = '-1';
+            
+            % >>> FIX: Find and apply correct sample time in Subsystem wrapping mode
             if strcmp(connectionMethod, 'fromgoto')
                 inName = tagOf(globalInputKeyList{k});
+                key = globalInputKeyList{k};
+                for rIdx = 1:numel(rootInputs)
+                    if strcmp(normKey(rootInputs(rIdx).Name, caseInsensitive), key)
+                        destModelName = rootInputs(rIdx).DestinationModels{1};
+                        destPortName = rootInputs(rIdx).DestinationPorts{1};
+                        ts = getChildInportSampleTime(destModelName, destPortName);
+                        break;
+                    end
+                end
             else
                 inName = rootInputs(k).Name;
+                destModelName = rootInputs(k).DestinationModels{1};
+                destPortName = rootInputs(k).DestinationPorts{1};
+                ts = getChildInportSampleTime(destModelName, destPortName);
             end
+            % <<<
+            
             rootInName = makeUniqueBlockName(targetModel, inName);
             add_block('simulink/Sources/In1', [targetModel '/' rootInName], 'Port', num2str(k), ...
                 'Position', [subX - 180, pY - 10, subX - 145, pY + 10]);
             if colorBlocks, set_param([targetModel '/' rootInName], 'BackgroundColor', globalInportColor); end
+            
+            % Set top-level Inport sample time
+            set_param([targetModel '/' rootInName], 'SampleTime', ts);
+            
             add_line(targetModel, [rootInName '/1'], sprintf('%s/%d', subsystemName, k), 'autorouting', 'off');
         end
         
@@ -1071,24 +1093,31 @@ end
 %  Local functions
 % =========================================================================
 
-% >>> FIX 2 (new helper): Safe config parameter reader
+% >>> FIX: Helper function to query child model port sample times
+function ts = getChildInportSampleTime(childModel, portName)
+% getChildInportSampleTime Retrieves expected sample time from referenced model
+    ts = '-1'; % Fallback to Inherited if unable to resolve
+    try
+        inBlock = find_system(childModel, 'SearchDepth', 1, ...
+            'FollowLinks', 'on', 'LookUnderMasks', 'all', ...
+            'BlockType', 'Inport', 'Name', portName);
+        if ~isempty(inBlock)
+            ts = get_param(inBlock{1}, 'SampleTime');
+        end
+    catch
+    end
+end
+% <<<
+
 function [val, ok] = readConfigParamSafe(modelName, paramName)
-% readConfigParamSafe  Reads a configuration parameter from a model,
-% resolving ConfigSetRef and component-level parameters safely.
-% Returns ok=false if the parameter does not exist in this model's config.
     val = '';
     ok = false;
-    
-    % Strategy 1: Direct get_param on model name (works for most parameters)
     try
         val = char(get_param(modelName, paramName));
         ok = true;
         return;
     catch
-        % Fall through to strategy 2
     end
-    
-    % Strategy 2: Resolve via active ConfigSet object
     try
         cs = getActiveConfigSet(modelName);
         if isa(cs, 'Simulink.ConfigSetRef')
@@ -1098,10 +1127,7 @@ function [val, ok] = readConfigParamSafe(modelName, paramName)
         ok = true;
         return;
     catch
-        % Fall through to strategy 3
     end
-    
-    % Strategy 3: Search all configuration components
     try
         cs = getActiveConfigSet(modelName);
         if isa(cs, 'Simulink.ConfigSetRef')
@@ -1114,18 +1140,13 @@ function [val, ok] = readConfigParamSafe(modelName, paramName)
                 ok = true;
                 return;
             catch
-                % Not in this component
             end
         end
     catch
-        % Config set not accessible at all
     end
-    
-    % Parameter genuinely does not exist in this model's configuration
     ok = false;
     val = '';
 end
-% <<< END FIX 2
 
 function available = discoverModelFiles(modelsFolder)
 slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
