@@ -1,13 +1,18 @@
-function report = validateModelCompatibility(modelsFolder, selectedModels, progressFcn)
+function report = validateModelCompatibility(modelsFolder, selectedModels, progressFcn, options)
 %VALIDATEMODELCOMPATIBILITY Highly optimized compatibility checker.
 % Performance-engineered to validate 200+ models in under 2 minutes.
 
     if nargin < 3 || isempty(progressFcn)
         progressFcn = @(pct, msg) fprintf('[%.0f%%] %s\n', pct * 100, msg);
     end
+    if nargin < 4 || isempty(options)
+        options = struct();
+    end
     if ischar(selectedModels)
         selectedModels = {selectedModels};
     end
+
+    forceInherited = isfield(options, 'ForceInheritedSampleTimes') && logical(options.ForceInheritedSampleTimes);
 
     report = struct( ...
         'Issues',          struct('Category', {}, 'Severity', {}, ...
@@ -25,7 +30,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         return;
     end
 
-    % --- STEP 1: Pre-map and Load Models (Deduplication-Safe) --------------
+    % --- STEP 1: Pre-map and Load Models -----------------------------------
     progressFcn(0.10, sprintf('Loading %d child models into memory...', numModels));
     openedByUs = {};
     loadedModels = {};
@@ -35,9 +40,10 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
     
     fileMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
     for fIdx = 1:numel(allFiles)
-        % Ignore slprj and hidden directories
-        if contains(allFiles(fIdx).folder, [filesep 'slprj']) || ...
-           contains(allFiles(fIdx).folder, [filesep '.'])
+        folderPath = allFiles(fIdx).folder;
+        if contains(folderPath, [filesep 'slprj']) || ...
+           contains(folderPath, [filesep '.']) || ...
+           contains(folderPath, [filesep 'backup'])
             continue;
         end
         [~, bName] = fileparts(allFiles(fIdx).name);
@@ -74,6 +80,25 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         return;
     end
 
+    % --- STEP 1.5: If ForceInheritedSampleTimes is ON, apply to child models
+    if forceInherited
+        progressFcn(0.20, 'Applying sample-time overrides (-1) for validation...');
+        for i = 1:numel(loadedModels)
+            mName = loadedModels{i};
+            try
+                inports = find_system(mName, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Inport');
+                for k = 1:numel(inports), try set_param(inports{k}, 'SampleTime', '-1'); catch, end; end
+                
+                outports = find_system(mName, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Outport');
+                for k = 1:numel(outports), try set_param(outports{k}, 'SampleTime', '-1'); catch, end; end
+                
+                delays = find_system(mName, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'UnitDelay');
+                for k = 1:numel(delays), try set_param(delays{k}, 'SampleTime', '-1'); catch, end; end
+            catch
+            end
+        end
+    end
+
     % --- STEP 2: Fast Static Sample-Time Check ----------------------------
     progressFcn(0.30, 'Performing static sample-time checks...');
     allSampleTimes = [];
@@ -95,13 +120,13 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
                 opName = get_param(opPath, 'Name');
                 opST = strtrim(get_param(opPath, 'SampleTime'));
                 
-                if ~isempty(opST) && ~any(strcmpi(opST, {'-1', 'inf', 'inherited'}))
+                if ~isempty(opST) && ~any(strcmpi(opST, {'-1', 'inf', 'inherited'})) && ~forceInherited
                     stVal = str2double(opST);
                     if ~isnan(stVal) && stVal > 0
                         report.Issues(end + 1) = makeIssue('SampleTime', 'warning', ...
                             modelName, opName, ...
                             sprintf('Root Outport "%s" has a hardcoded sample time of %s.', opName, opST), ...
-                            'The generator will automatically override this to "-1" (Inherited).'); %#ok<AGROW>
+                            'Enable "Force all Inports/Outports/UnitDelays to inherited sample time (-1)" to automatically fix this.'); %#ok<AGROW>
                     end
                 end
             end
@@ -227,7 +252,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
 end
 
 %% ========================================================================
-%%  LOCAL HELPER FUNCTIONS (Declared ONCE only)
+%%  LOCAL HELPER FUNCTIONS
 %% ========================================================================
 function issue = makeIssue(category, severity, model, port, description, fix)
     issue = struct( ...

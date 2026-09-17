@@ -7,28 +7,28 @@ if nargin < 4 || isempty(options)
     options = struct();
 end
 options = fillDefaults(options, struct( ...
-    'OutputFolder',          '', ...
-    'Overwrite',             false, ...
-    'BackupExisting',        true, ...
-    'CaseInsensitiveMatch',  true, ...
-    'ConfigParameters',      {{'UseDivisionForNetSlopeComputation'}}, ...
-    'CloseReferencedModels', true, ...
-    'WrapInSubsystem',       false, ...
-    'TidyLayout',            true, ...
-    'ConnectionMethod',      'lines', ...
-    'Layout',                'vertical', ...
-    'ColorBlocks',           false, ...
-    'AutoDelayFeedback',     false, ...
+    'OutputFolder',                 '', ...
+    'Overwrite',                    false, ...
+    'BackupExisting',               true, ...
+    'CaseInsensitiveMatch',         true, ...
+    'ConfigParameters',             {{'UseDivisionForNetSlopeComputation'}}, ...
+    'CloseReferencedModels',        true, ...
+    'WrapInSubsystem',              false, ...
+    'TidyLayout',                   true, ...
+    'ConnectionMethod',             'lines', ...
+    'Layout',                       'vertical', ...
+    'ColorBlocks',                  false, ...
+    'AutoDelayFeedback',            false, ...
     'AllowMultipleInstances',       true, ...   
     'ForceInheritedSampleTimes',    false, ...   
-    'BlockSpacing',          100, ...
-    'FromModelGap',          [], ...
-    'ModelGotoGap',          [], ...
-    'FromToDelayGap',        [], ...
-    'ModelToModelGap',       [], ...
-    'PreviewOnly',           false, ...
-    'ProgressFcn',           @(~, ~) [], ...
-    'CancelRequestedFcn',    @false));
+    'BlockSpacing',                 100, ...
+    'FromModelGap',                 [], ...
+    'ModelGotoGap',                 [], ...
+    'FromToDelayGap',               [], ...
+    'ModelToModelGap',              [], ...
+    'PreviewOnly',                  false, ...
+    'ProgressFcn',                  @(~, ~) [], ...
+    'CancelRequestedFcn',           @false));
 
 progressFcn = options.ProgressFcn;
 cancelFcn = options.CancelRequestedFcn;
@@ -160,19 +160,70 @@ try
             loadedByUs{end + 1} = modelNames{modelIndex}; %#ok<AGROW>
         end
         
-        % >>> Enable multiple instances for referenced models
         if options.AllowMultipleInstances
             try
                 set_param(modelNames{modelIndex}, 'ModelReferenceNumInstancesAllowed', 'Multi');
             catch
             end
         end
-        % <<<
     end
 catch loadError
     closeLoadedModels(loadedByUs);
     error('buildParentModelCore:ModelLoadFailed', ...
         'Could not load model %s.\n\nDetails:\n%s', modelPaths{modelIndex}, errorChainText(loadError));
+end
+
+% =========================================================================
+% EARLY EXECUTION: FORCE INHERITED SAMPLE TIMES (-1) ACROSS CHILD MODELS
+% =========================================================================
+if options.ForceInheritedSampleTimes
+    progressFcn(0.20, 'Scanning & enforcing inherited sample times (-1)...');
+    
+    allChanges = {};
+    for mIdx = 1:numModels
+        allChanges = [allChanges; collectSampleTimeChanges(modelNames{mIdx})]; %#ok<AGROW>
+    end
+    
+    if isempty(allChanges)
+        result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
+        result.Notes{end + 1} = 'No blocks required sample-time change (all already at -1 or inherited).';
+        result.Notes{end + 1} = '=========================================================';
+    else
+        result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
+        for cIdx = 1:numel(allChanges)
+            ch = allChanges{cIdx};
+            logLine = sprintf('[%s] %s (%s) ''%s'' -> ''-1''', ...
+                ch.ModelName, ch.BlockPath, ch.BlockType, ch.OldValue);
+            result.Notes{end + 1} = logLine; %#ok<AGROW>
+        end
+        summaryLine = sprintf('Total: %d block(s) changed to SampleTime = -1', numel(allChanges));
+        result.Notes{end + 1} = summaryLine;
+        result.Notes{end + 1} = '=========================================================';
+        
+        % Apply changes to child models immediately
+        for cIdx = 1:numel(allChanges)
+            ch = allChanges{cIdx};
+            try
+                set_param(ch.BlockPath, 'SampleTime', '-1');
+            catch applyErr
+                result.Warnings{end + 1} = sprintf( ...
+                    'Failed to set SampleTime on %s: %s', ch.BlockPath, applyErr.message); %#ok<AGROW>
+            end
+        end
+        
+        % Save dirty child models
+        for mIdx = 1:numModels
+            mdlName = modelNames{mIdx};
+            if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
+                try
+                    save_system(mdlName);
+                catch saveErr
+                    result.Warnings{end + 1} = sprintf( ...
+                        'Failed to save child model "%s": %s', mdlName, saveErr.message); %#ok<AGROW>
+                end
+            end
+        end
+    end
 end
 
 parentCreated = false;
@@ -301,20 +352,6 @@ try
         outputs = modelInfo(modelIndex).OutputNames(:);
         flatOutputs = [flatOutputs; outputs]; %#ok<AGROW>
         flatOwners = [flatOwners; repmat(modelIndex, numel(outputs), 1)]; %#ok<AGROW>
-    end
-    if ~isempty(flatOutputs)
-        flatKeys = cellfun(@(s) normKey(s, caseInsensitive), flatOutputs, 'UniformOutput', false);
-        connectionSourceKeys = cellfun(@(s) normKey(s, caseInsensitive), {internalConnections.SrcPort}, 'UniformOutput', false);
-        [uniqueKeys, ~, keyGroups] = unique(flatKeys);
-        for keyIndex = 1:numel(uniqueKeys)
-            thisGroup = find(keyGroups == keyIndex);
-            ownerIndexes = unique(flatOwners(thisGroup));
-            if numel(ownerIndexes) <= 1, continue; end
-            if ~any(strcmp(connectionSourceKeys, uniqueKeys{keyIndex})), continue; end
-            ownerNames = modelNames(ownerIndexes);
-            result.Warnings{end + 1} = sprintf('Output "%s" exists in multiple models (%s). Only "%s" feeds internal connections.', ...
-                flatOutputs{thisGroup(1)}, strjoin(ownerNames(:), ', '), ownerNames{1}); %#ok<AGROW>
-        end
     end
 
     rootInputs = result.RootInputs;
@@ -475,103 +512,49 @@ try
 
     if strcmp(connectionMethod, 'fromgoto')
         % ============================================================
-        % FROM/GOTO MODE
+        % FROM/GOTO MODE (DISAMBIGUATED TAG MAPPING)
         % ============================================================
         progressFcn(0.65, 'Adding Model Reference blocks (From/Goto style)...');
 
-        signalKeys = {}; signalNames = {}; signalModels = {};
-        inputKeys = {}; modelOutputKeys = cell(numModels, 1);
+        modelOutputKeys = cell(numModels, 1);
         modelInputKeys = cell(numModels, 1);
-        
-        for modelIndex = 1:numModels
-            outKeys = cell(numel(modelInfo(modelIndex).OutputNames), 1);
-            for outputIndex = 1:numel(modelInfo(modelIndex).OutputNames)
-                sig = modelInfo(modelIndex).OutputNames{outputIndex};
-                key = normKey(sig, caseInsensitive);
-                outKeys{outputIndex} = key;
-                signalKeys{end + 1, 1} = key;   %#ok<AGROW>
-                signalNames{end + 1, 1} = sig;  %#ok<AGROW>
-                signalModels{end + 1, 1} = modelInfo(modelIndex).Name;  %#ok<AGROW>
-            end
-            modelOutputKeys{modelIndex} = outKeys;
-            
-            inKeys = cell(numel(modelInfo(modelIndex).InputNames), 1);
-            for inputIndex = 1:numel(modelInfo(modelIndex).InputNames)
-                sig = modelInfo(modelIndex).InputNames{inputIndex};
-                key = normKey(sig, caseInsensitive);
-                inKeys{inputIndex} = key;
-                inputKeys{end + 1, 1} = key;    %#ok<AGROW>
-                signalKeys{end + 1, 1} = key;   %#ok<AGROW>
-                signalNames{end + 1, 1} = sig;  %#ok<AGROW>
-                signalModels{end + 1, 1} = modelInfo(modelIndex).Name;  %#ok<AGROW>
-            end
-            modelInputKeys{modelIndex} = inKeys;
-        end
-
-        tagOf = containers.Map('KeyType', 'char', 'ValueType', 'char');
         usedTags = {};
-        for signalIndex = 1:numel(signalKeys)
-            key = signalKeys{signalIndex};
-            if ~isKey(tagOf, key)
-                baseTag = safeName(signalNames{signalIndex});
-                tag = baseTag;
-                suffix = 2;
-                while any(strcmp(usedTags, tag))
-                    if suffix == 2
-                        modelTag = safeName(signalModels{signalIndex});
-                        if ~isempty(modelTag) && ~any(strcmp(usedTags, [baseTag '_' modelTag]))
-                            tag = [baseTag '_' modelTag];
-                            break;
-                        end
+
+        % Construct model-specific unique From/Goto tags
+        for modelIndex = 1:numModels
+            outputs = modelInfo(modelIndex).OutputNames;
+            tags = cell(numel(outputs), 1);
+            for outputIndex = 1:numel(outputs)
+                sigName = outputs{outputIndex};
+                baseTag = safeName(sigName);
+                
+                % Disambiguate if signal name exists across multiple models
+                key = normKey(sigName, caseInsensitive);
+                isDup = false;
+                for otherM = 1:numModels
+                    if otherM == modelIndex, continue; end
+                    if any(strcmp(cellfun(@(s) normKey(s, caseInsensitive), modelInfo(otherM).OutputNames, 'UniformOutput', false), key))
+                        isDup = true;
+                        break;
                     end
-                    tag = sprintf('%s_%d', baseTag, suffix);
+                end
+                
+                if isDup
+                    tag = sprintf('%s_%s', baseTag, safeName(modelInfo(modelIndex).Name));
+                else
+                    tag = baseTag;
+                end
+                
+                uniqueTag = tag;
+                suffix = 2;
+                while any(strcmp(usedTags, uniqueTag))
+                    uniqueTag = sprintf('%s_%d', tag, suffix);
                     suffix = suffix + 1;
                 end
-                tagOf(key) = tag;
-                usedTags{end + 1} = tag; %#ok<AGROW>
+                tags{outputIndex} = uniqueTag;
+                usedTags{end + 1} = uniqueTag; %#ok<AGROW>
             end
-        end
-
-        maxProducerOrder = containers.Map('KeyType', 'char', 'ValueType', 'double');
-        firstProducerOrder = containers.Map('KeyType', 'char', 'ValueType', 'double');
-        for modelIndex = 1:numModels
-            for outputIndex = 1:numel(modelOutputKeys{modelIndex})
-                key = modelOutputKeys{modelIndex}{outputIndex};
-                if ~isKey(firstProducerOrder, key), firstProducerOrder(key) = modelIndex; end
-                if isKey(maxProducerOrder, key), maxProducerOrder(key) = max(maxProducerOrder(key), modelIndex);
-                else, maxProducerOrder(key) = modelIndex; end
-            end
-        end
-
-        minConsumerOrder = containers.Map('KeyType', 'char', 'ValueType', 'double');
-        for modelIndex = 1:numModels
-            for inputIndex = 1:numel(modelInputKeys{modelIndex})
-                key = modelInputKeys{modelIndex}{inputIndex};
-                if isKey(minConsumerOrder, key), minConsumerOrder(key) = min(minConsumerOrder(key), modelIndex);
-                else, minConsumerOrder(key) = modelIndex; end
-            end
-        end
-
-        allOutputKeys = {};
-        for modelIndex = 1:numModels
-            allOutputKeys = [allOutputKeys; modelOutputKeys{modelIndex}]; %#ok<AGROW>
-        end
-        uniqueOutputKeyList = unique(allOutputKeys);
-
-        for keyIndex = 1:numel(uniqueOutputKeyList)
-            key = uniqueOutputKeyList{keyIndex};
-            producerCount = 0;
-            for modelIndex = 1:numModels
-                if any(strcmp(modelOutputKeys{modelIndex}, key))
-                    producerCount = producerCount + 1;
-                end
-            end
-            if producerCount > 1
-                result.Warnings{end + 1} = sprintf( ...
-                    ['Signal "%s" is produced by %d models. With From/Goto ', ...
-                     'routing every signal name must be unique - rename the ', ...
-                     'duplicate output ports.'], tagOf(key), producerCount); %#ok<AGROW>
-            end
+            modelOutputKeys{modelIndex} = tags;
         end
 
         longestTagLength = 6;
@@ -666,7 +649,17 @@ try
             for inputIndex = 1:numel(modelInfo(modelIndex).InputNames)
                 sig = modelInfo(modelIndex).InputNames{inputIndex};
                 key = normKey(sig, caseInsensitive);
-                tag = tagOf(key);
+                
+                % Find which model tag feeds this input
+                tag = safeName(sig);
+                for connIdx = 1:numel(internalConnections)
+                    conn = internalConnections(connIdx);
+                    if conn.DstModelIndex == modelIndex && conn.DstPortIndex == inputIndex
+                        tag = modelOutputKeys{conn.SrcModelIndex}{conn.SrcPortIndex};
+                        break;
+                    end
+                end
+                
                 signalY = modelInfo(modelIndex).InputPortYs(inputIndex);
 
                 fromCounter = 1;
@@ -674,10 +667,7 @@ try
                 fromCountByTag(tag) = fromCounter;
                 fromName = makeUniqueBlockName(containerSystem, sprintf('%s_From_%d', tag, fromCounter));
                 
-                selfFeed = isSelfFeeding(modelOutputKeys, modelIndex, key) && ...
-                    isKey(firstProducerOrder, key) && firstProducerOrder(key) == modelIndex && ...
-                    isKey(maxProducerOrder, key) && maxProducerOrder(key) == modelIndex;
-                inputIsFeedback = autoDelayFeedback && ((isKey(maxProducerOrder, key) && maxProducerOrder(key) > modelIndex) || selfFeed);
+                inputIsFeedback = autoDelayFeedback && (conn.SrcModelIndex >= modelIndex);
                 
                 if inputIsFeedback
                     fromRight = blockPos(1) - (fromModelGap + fromToDelayGap + 40);
@@ -688,9 +678,6 @@ try
                 
                 add_block('simulink/Signal Routing/From', [containerSystem '/' fromName], 'GotoTag', tag, ...
                     'Position', [fromLeft, signalY - 10, fromRight, signalY + 10]);
-                if colorBlocks && isKey(firstProducerOrder, key)
-                    set_param([containerSystem '/' fromName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
-                end
 
                 if inputIsFeedback
                     delayName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
@@ -698,9 +685,6 @@ try
                     add_block('built-in/UnitDelay', [containerSystem '/' delayName], ...
                         'SampleTime', '-1', ...
                         'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]);
-                    if colorBlocks && isKey(firstProducerOrder, key)
-                        set_param([containerSystem '/' delayName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
-                    end
                     add_line(containerSystem, [fromName '/1'], [delayName '/1'], 'autorouting', 'off');
                     add_line(containerSystem, [delayName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
                     autoDelayCount = autoDelayCount + 1;
@@ -710,9 +694,7 @@ try
             end
 
             for outputIndex = 1:numel(modelInfo(modelIndex).OutputNames)
-                sig = modelInfo(modelIndex).OutputNames{outputIndex};
-                key = normKey(sig, caseInsensitive);
-                tag = tagOf(key);
+                tag = modelOutputKeys{modelIndex}{outputIndex};
                 signalY = modelInfo(modelIndex).OutputPortYs(outputIndex);
 
                 gotoLeft = blockPos(3) + gotoGap;
@@ -731,12 +713,8 @@ try
         end
 
         progressFcn(0.88, 'Adding global inputs and outputs...');
-        uniqueInputKeyList = unique(inputKeys);
-        globalInputKeyList = setdiff(uniqueInputKeyList, uniqueOutputKeyList, 'stable');
-
-        for g = 1:numel(globalInputKeyList)
-            key = globalInputKeyList{g};
-            tag = tagOf(key);
+        for g = 1:numel(rootInputs)
+            tag = safeName(rootInputs(g).Name);
             signalY = 50 + g * 36;
             inBlockName = makeUniqueBlockName(containerSystem, tag);
             
@@ -756,36 +734,23 @@ try
         globalFromX = rightMostEdge + max(300, 2 * blockSpacing + 100);
         globalOutX = globalFromX + commonFromGotoWidth + blockSpacing;
         
-        uniqueRootOutputs = struct('Name', {}, 'SourceModel', {}, 'SourcePort', {}, 'SourceModelIndex', {}, 'SourcePortIndex', {});
-        for g = 1:numel(uniqueOutputKeyList)
-            key = uniqueOutputKeyList{g};
-            tag = tagOf(key);
+        for g = 1:numel(rootOutputs)
+            prodIdx = rootOutputs(g).SourceModelIndex;
+            portIdx = rootOutputs(g).SourcePortIndex;
+            tag = modelOutputKeys{prodIdx}{portIdx};
+            
             signalY = 50 + g * 36;
             fromBlockName = makeUniqueBlockName(containerSystem, ['From_' tag]);
             
             add_block('simulink/Signal Routing/From', [containerSystem '/' fromBlockName], 'GotoTag', tag, ...
                 'Position', [globalFromX, signalY - 10, globalFromX + commonFromGotoWidth, signalY + 10]);
-            if colorBlocks && isKey(firstProducerOrder, key)
-                set_param([containerSystem '/' fromBlockName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
-            end
             
-            outBlockName = makeUniqueBlockName(containerSystem, tag);
+            outBlockName = makeUniqueBlockName(containerSystem, rootOutputs(g).Name);
             add_block('simulink/Sinks/Out1', [containerSystem '/' outBlockName], 'Port', num2str(g), ...
                 'Position', [globalOutX, signalY - 10, globalOutX + 35, signalY + 10]);
             if colorBlocks, set_param([containerSystem '/' outBlockName], 'BackgroundColor', globalOutportColor); end
             add_line(containerSystem, [fromBlockName '/1'], [outBlockName '/1'], 'autorouting', 'off');
-
-            prodIndex = 1;
-            if isKey(firstProducerOrder, key), prodIndex = firstProducerOrder(key); end
-            portIdx = find(strcmp(modelOutputKeys{prodIndex}, key), 1);
-            if isempty(portIdx), portIdx = 1; end
-            uniqueRootOutputs(g) = struct('Name', tag, 'SourceModel', modelInfo(prodIndex).Name, ...
-                'SourcePort', modelInfo(prodIndex).OutputNames{portIdx}, 'SourceModelIndex', prodIndex, 'SourcePortIndex', portIdx);
         end
-        result.RootOutputs = uniqueRootOutputs;
-        result.Counts.RootOutputs = numel(uniqueRootOutputs);
-        result.Counts.Internal = numel(internalConnections);
-        result.Counts.RootInputs = numel(globalInputKeyList);
 
     else
         % ============================================================
@@ -913,11 +878,7 @@ try
         for k = 1:numel(ph.Inport)
             pPos = get_param(ph.Inport(k), 'Position');
             pY = pPos(2);
-            if strcmp(connectionMethod, 'fromgoto')
-                inName = tagOf(globalInputKeyList{k});
-            else
-                inName = rootInputs(k).Name;
-            end
+            inName = rootInputs(k).Name;
             
             rootInName = makeUniqueBlockName(targetModel, inName);
             add_block('simulink/Sources/In1', [targetModel '/' rootInName], 'Port', num2str(k), ...
@@ -929,11 +890,8 @@ try
         for k = 1:numel(ph.Outport)
             pPos = get_param(ph.Outport(k), 'Position');
             pY = pPos(2);
-            if strcmp(connectionMethod, 'fromgoto')
-                outName = result.RootOutputs(k).Name;
-            else
-                outName = rootOutputs(k).Name;
-            end
+            outName = result.RootOutputs(k).Name;
+            
             rootOutName = makeUniqueBlockName(targetModel, outName);
             add_block('simulink/Sinks/Out1', [targetModel '/' rootOutName], 'Port', num2str(k), ...
                 'Position', [subX + subWidth + 145, pY - 10, subX + subWidth + 180, pY + 10]);
@@ -942,61 +900,13 @@ try
         end
     end
 
-    % =========================================================================
-    % OPTIONAL: FORCE INHERITED SAMPLE TIMES (-1) ACROSS PARENT + CHILD MODELS
-    % =========================================================================
+    % Also apply sample-time override to generated target model if option enabled
     if options.ForceInheritedSampleTimes
-        progressFcn(0.97, 'Collecting sample-time changes...');
-        
-        % STEP 1: Scan and collect all pending changes (batch mode)
-        allChanges = {};
-        allChanges = [allChanges; collectSampleTimeChanges(targetModel)];
-        for mIdx = 1:numModels
-            allChanges = [allChanges; collectSampleTimeChanges(modelNames{mIdx})]; %#ok<AGROW>
-        end
-        
-        % STEP 2: Log the full report BEFORE applying any change
-        if isempty(allChanges)
-            result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
-            result.Notes{end + 1} = 'No blocks required sample-time change (all already at -1 or inherited).';
-            result.Notes{end + 1} = '=========================================================';
-        else
-            headerLine = '================== SAMPLE TIME CHANGES ==================';
-            footerLine = '=========================================================';
-            result.Notes{end + 1} = headerLine;
-            for cIdx = 1:numel(allChanges)
-                ch = allChanges{cIdx};
-                logLine = sprintf('[%s] %s (%s) ''%s'' -> ''-1''', ...
-                    ch.ModelName, ch.BlockPath, ch.BlockType, ch.OldValue);
-                result.Notes{end + 1} = logLine; %#ok<AGROW>
-            end
-            summaryLine = sprintf('Total: %d block(s) will be changed to SampleTime = -1', numel(allChanges));
-            result.Notes{end + 1} = summaryLine;
-            result.Notes{end + 1} = footerLine;
-            
-            % STEP 3: Apply all changes now
-            progressFcn(0.975, sprintf('Applying %d sample-time changes...', numel(allChanges)));
-            for cIdx = 1:numel(allChanges)
-                ch = allChanges{cIdx};
-                try
-                    set_param(ch.BlockPath, 'SampleTime', '-1');
-                catch applyErr
-                    result.Warnings{end + 1} = sprintf( ...
-                        'Failed to set SampleTime on %s: %s', ch.BlockPath, applyErr.message); %#ok<AGROW>
-                end
-            end
-            
-            % STEP 4: Save any modified child models
-            for mIdx = 1:numModels
-                mdlName = modelNames{mIdx};
-                if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
-                    try
-                        save_system(mdlName);
-                    catch saveErr
-                        result.Warnings{end + 1} = sprintf( ...
-                            'Failed to save child model "%s": %s', mdlName, saveErr.message); %#ok<AGROW>
-                    end
-                end
+        targetChanges = collectSampleTimeChanges(targetModel);
+        for cIdx = 1:numel(targetChanges)
+            try
+                set_param(targetChanges{cIdx}.BlockPath, 'SampleTime', '-1');
+            catch
             end
         end
     end
@@ -1072,7 +982,6 @@ function changes = collectSampleTimeChanges(sys)
         end
     end
     
-    % Unlock model if locked
     try
         if strcmp(get_param(sys, 'Lock'), 'on')
             set_param(sys, 'Lock', 'off');
@@ -1080,7 +989,6 @@ function changes = collectSampleTimeChanges(sys)
     catch
     end
     
-    % Scan Inports, Outports, and UnitDelays
     blockTypes = {'Inport', 'Outport', 'UnitDelay'};
     for bIdx = 1:numel(blockTypes)
         btype = blockTypes{bIdx};
@@ -1098,12 +1006,10 @@ function changes = collectSampleTimeChanges(sys)
                 continue;
             end
             
-            % Skip blocks that are already at -1
             if strcmp(oldValue, '-1')
                 continue;
             end
             
-            % Record the pending change
             changes{end + 1, 1} = struct( ...
                 'ModelName', sys, ...
                 'BlockPath', blkPath, ...
@@ -1153,13 +1059,11 @@ function [val, ok] = readConfigParamSafe(modelName, paramName)
 end
 
 function available = discoverModelFiles(modelsFolder)
-% discoverModelFiles Finds all .slx and .mdl files, ignoring slprj/cache folders
     slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
     mdlFiles = dir(fullfile(modelsFolder, '**', '*.mdl'));
     files = [slxFiles; mdlFiles];
     files = files(~[files.isdir]);
     
-    % Filter out slprj, hidden folders, and backup directories
     keep = true(numel(files), 1);
     for fIdx = 1:numel(files)
         folderPath = files(fIdx).folder;
@@ -1171,7 +1075,6 @@ function available = discoverModelFiles(modelsFolder)
     end
     files = files(keep);
 
-    % Deduplicate: if a model appears in root and a subfolder, prefer root
     fileMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
     for fIdx = 1:numel(files)
         [~, bName] = fileparts(files(fIdx).name);
@@ -1181,7 +1084,6 @@ function available = discoverModelFiles(modelsFolder)
         if ~isKey(fileMap, key)
             fileMap(key) = filePath;
         else
-            % If previous was in a subfolder but current is in root modelsFolder, override
             if strcmpi(files(fIdx).folder, modelsFolder)
                 fileMap(key) = filePath;
             end
