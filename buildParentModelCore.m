@@ -19,8 +19,8 @@ options = fillDefaults(options, struct( ...
     'Layout',                'vertical', ...
     'ColorBlocks',           false, ...
     'AutoDelayFeedback',     false, ...
-    'AllowMultipleInstances',       true, ...   % <<< NEW: Allows same model to be referenced multiple times
-    'ForceInheritedSampleTimes',    false, ...   % <<< NEW: default OFF
+    'AllowMultipleInstances',       true, ...   
+    'ForceInheritedSampleTimes',    false, ...   
     'BlockSpacing',          100, ...
     'FromModelGap',          [], ...
     'ModelGotoGap',          [], ...
@@ -146,25 +146,6 @@ for modelIndex = 1:numModels
     modelNames{modelIndex} = availableModels.names{matchIndexes(1)};
     modelPaths{modelIndex} = availableModels.paths{matchIndexes(1)};
 end
-
-% ------------------------------------------------------------ Load Models
-% progressFcn(0.15, 'Loading referenced models...');
-% searchPath = genpath(modelsFolder);
-% if ~isempty(searchPath), addpath(searchPath); end
-
-% loadedByUs = {};
-% try
-%     for modelIndex = 1:numModels
-%         if ~bdIsLoaded(modelNames{modelIndex})
-%             load_system(modelPaths{modelIndex});
-%             loadedByUs{end + 1} = modelNames{modelIndex}; %#ok<AGROW>
-%         end
-%     end
-% catch loadError
-%     closeLoadedModels(loadedByUs);
-%     error('buildParentModelCore:ModelLoadFailed', ...
-%         'Could not load model %s.\n\nDetails:\n%s', modelPaths{modelIndex}, errorChainText(loadError));
-% end
 
 % ------------------------------------------------------------ Load Models
 progressFcn(0.15, 'Loading referenced models...');
@@ -715,7 +696,7 @@ try
                     delayName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
                     delayLeft = fromRight + fromToDelayGap;
                     add_block('built-in/UnitDelay', [containerSystem '/' delayName], ...
-                        'sampletime', '-1', ...
+                        'SampleTime', '-1', ...
                         'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]);
                     if colorBlocks && isKey(firstProducerOrder, key)
                         set_param([containerSystem '/' delayName], 'BackgroundColor', paletteColor(firstProducerOrder(key)));
@@ -962,9 +943,6 @@ try
     end
 
     % =========================================================================
-    % GLOBAL SWEEP: Enforce Inherited Sample Time (-1) on All Levels of Ports
-    % =========================================================================
-    % =========================================================================
     % OPTIONAL: FORCE INHERITED SAMPLE TIMES (-1) ACROSS PARENT + CHILD MODELS
     % =========================================================================
     if options.ForceInheritedSampleTimes
@@ -1134,40 +1112,6 @@ function changes = collectSampleTimeChanges(sys)
         end
     end
 end
-    
-    % Unlock model if it's locked (e.g. library block)
-    isLocked = strcmp(get_param(sys, 'Lock'), 'on');
-    if isLocked
-        set_param(sys, 'Lock', 'off');
-    end
-    
-    % Sweep Inports
-    allInports = find_system(sys, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Inport');
-    for idx = 1:numel(allInports)
-        try
-            if ~strcmp(get_param(allInports{idx}, 'SampleTime'), '-1')
-                set_param(allInports{idx}, 'SampleTime', '-1');
-            end
-        catch
-        end
-    end
-    
-    % Sweep Outports
-    allOutports = find_system(sys, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Outport');
-    for idx = 1:numel(allOutports)
-        try
-            if ~strcmp(get_param(allOutports{idx}, 'SampleTime'), '-1')
-                set_param(allOutports{idx}, 'SampleTime', '-1');
-            end
-        catch
-        end
-    end
-    % Sweep UnitDelays
-    % allDelays = find_system(sys, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'UnitDelay');
-    % for idx = 1:numel(allDelays)
-    %     try, set_param(allDelays{idx}, 'SampleTime', '-1'); catch, end
-    % end
-end
 
 function [val, ok] = readConfigParamSafe(modelName, paramName)
     val = '';
@@ -1208,18 +1152,6 @@ function [val, ok] = readConfigParamSafe(modelName, paramName)
     val = '';
 end
 
-% function available = discoverModelFiles(modelsFolder)
-% slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
-% mdlFiles = dir(fullfile(modelsFolder, '**', '*.mdl'));
-% files = [slxFiles; mdlFiles];
-% available.names = cell(numel(files), 1);
-% available.paths = cell(numel(files), 1);
-% for fileIndex = 1:numel(files)
-%     [~, discoveredName] = fileparts(files(fileIndex).name);
-%     available.names{fileIndex} = discoveredName;
-%     available.paths{fileIndex} = fullfile(files(fileIndex).folder, files(fileIndex).name);
-% end
-% end
 function available = discoverModelFiles(modelsFolder)
 % discoverModelFiles Finds all .slx and .mdl files, ignoring slprj/cache folders
     slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
@@ -1267,6 +1199,7 @@ function available = discoverModelFiles(modelsFolder)
         available.paths{kIdx} = p;
     end
 end
+
 function [inputNames, outputNames] = getRootPortNames(modelName)
 inputBlocks = find_system(char(modelName), 'SearchDepth', 1, 'FollowLinks', 'on', 'LookUnderMasks', 'all', 'BlockType', 'Inport');
 outputBlocks = find_system(char(modelName), 'SearchDepth', 1, 'FollowLinks', 'on', 'LookUnderMasks', 'all', 'BlockType', 'Outport');
@@ -1384,5 +1317,3 @@ for groupIndex = 1:numel(err.cause)
 end
 text = regexprep(text, '<a[^>]*>\s*([^<]*?)\s*</a>', '$1');
 end
-
-

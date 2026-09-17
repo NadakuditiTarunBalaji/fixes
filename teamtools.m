@@ -116,13 +116,250 @@ tab2 = uitab(tabs, 'Title', 'Extract Attributes');
 % =========================================================================
 %  TAB 1 - BUILD PARENT MODEL (12 Rows)
 % =========================================================================
+% g1 = uigridlayout(tab1, [13 6]);
+% g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 26, 24, 24, 48, 24, 24, '1x'};
+% g1.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
+% g1.Padding = [14 10 14 10];
+% g1.RowSpacing = 6;
+% g1.ColumnSpacing = 8;
+
+% hint1 = uilabel(g1, ...
+%     'Text', ['1) Choose models folder    2) Add/Import models in order    ' ...
+%     '3) Preview (Validates compatibility & wiring)    4) Generate'], ...
+%     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
+% hint1.Layout.Row = 1;
+% hint1.Layout.Column = [1 6];
+
+% lblModelsFolder = uilabel(g1, 'Text', 'Models folder:', 'FontWeight', 'bold');
+% lblModelsFolder.Layout.Row = 2;
+% lblModelsFolder.Layout.Column = 1;
+
+% modelsFolderEdit = uieditfield(g1, 'text', ...
+%     'Value', '', ...
+%     'Placeholder', 'Folder that contains the .slx/.mdl models', ...
+%     'ValueChangedFcn', @onModelsFolderChanged);
+% modelsFolderEdit.Layout.Row = 2;
+% modelsFolderEdit.Layout.Column = [2 5];
+
+% browseModelsBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @browseModelsFolder);
+% browseModelsBtn.Layout.Row = 2;
+% browseModelsBtn.Layout.Column = 6;
+
+% lblAvail = uilabel(g1, 'Text', 'Available models:', 'FontWeight', 'bold');
+% lblAvail.Layout.Row = 3;
+% lblAvail.Layout.Column = 1;
+
+% % search box: filters the available-models list while you type
+% filterEdit = uieditfield(g1, 'text', ...
+%     'Placeholder', 'Type to filter...', ...
+%     'ValueChangedFcn', @onAvailableFilterChanged);
+% filterEdit.Layout.Row = 3;
+% filterEdit.Layout.Column = 2;
+% safeTooltip(filterEdit, ['Type part of a model or subfolder name and ', ...
+%     'press Enter to shorten the list; clear the box and press Enter ', ...
+%     'to show every model again.']);
+
+% lblSel = uilabel(g1, 'Text', 'Selected models (order matters):', ...
+%     'FontWeight', 'bold');
+% lblSel.Layout.Row = 3;
+% lblSel.Layout.Column = [4 6];
+
+% availableList = uilistbox(g1);
+% availableList.Layout.Row = 4;
+% availableList.Layout.Column = [1 2];
+% safeTooltip(availableList, ...
+%     'Ctrl+click or Shift+click to select several models at once');
+
+% btnGrid = uigridlayout(g1, [7 1]);
+% btnGrid.Layout.Row = 4;
+% btnGrid.Layout.Column = 3;
+% btnGrid.Padding = [2 2 2 2];
+% btnGrid.RowSpacing = 5;
+
+% addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @addModel);
+% addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @addAllModels);
+% safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
+%     'when a search filter is active, only the matching models ', ...
+%     'are added.']);
+
+% importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @importFromExcel);
+% safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
+%     'to import an ordered list of models from Column A.']);
+
+% removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @removeModel);
+% clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @clearSelectedModels);
+% safeTooltip(clearListBtn, ['Empties the selected-models list only - ', ...
+%     'folders and options stay as they are.']);
+% upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @moveModelUp);
+% downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @moveModelDown);
+
+% selectedList = uilistbox(g1);
+% selectedList.Layout.Row = 4;
+% selectedList.Layout.Column = [4 6];
+% safeTooltip(selectedList, ...
+%     'Ctrl+click or Shift+click to select several models at once');
+
+% enableMultiSelect(availableList);
+% enableMultiSelect(selectedList);
+
+% lblName = uilabel(g1, 'Text', 'Generated model name:', 'FontWeight', 'bold');
+% lblName.Layout.Row = 5;
+% lblName.Layout.Column = 1;
+
+% nameEdit = uieditfield(g1, 'text', ...
+%     'Placeholder', 'GeneratedReferenceModel', ...
+%     'Value', '');
+% nameEdit.Layout.Row = 5;
+% nameEdit.Layout.Column = [2 3];
+
+% lblSave = uilabel(g1, 'Text', 'Save in folder:', 'FontWeight', 'bold');
+% lblSave.Layout.Row = 5;
+% lblSave.Layout.Column = 4;
+
+% saveFolderEdit = uieditfield(g1, 'text', ...
+%     'Value', '', ...
+%     'Placeholder', '(same as the models folder)');
+% saveFolderEdit.Layout.Row = 5;
+% saveFolderEdit.Layout.Column = 5;
+
+% browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @browseSaveFolder);
+% browseSaveBtn.Layout.Row = 5;
+% browseSaveBtn.Layout.Column = 6;
+
+% chkWrap = uicheckbox(g1, ...
+%     'Text', 'Create main subsystem (wrap all contents)', 'Value', true);
+% safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
+%     'placed inside one main subsystem of the parent model.']);
+% chkWrap.Layout.Row = 6;
+% chkWrap.Layout.Column = [1 6];
+
+% lblConnMethod = uilabel(g1, 'Text', 'Connect via:');
+% lblConnMethod.Layout.Row = 7;
+% lblConnMethod.Layout.Column = 1;
+
+% connMethodDrop = uidropdown(g1, ...
+%     'Items', {'From/Goto blocks', 'Direct lines'}, ...
+%     'Value', 'From/Goto blocks');
+% safeTooltip(connMethodDrop, ['From/Goto blocks: signals travel through ', ...
+%     'Goto/From tags - no crossing lines. Direct lines: physical lines ', ...
+%     'from each output to every matching input.']);
+% connMethodDrop.Layout.Row = 7;
+% connMethodDrop.Layout.Column = [2 3];
+
+% lblArrange = uilabel(g1, 'Text', 'Arrangement:');
+% lblArrange.Layout.Row = 7;
+% lblArrange.Layout.Column = 4;
+
+% layoutDrop = uidropdown(g1, ...
+%     'Items', {'Horizontal (side by side)', 'Vertical (stacked)'}, ...
+%     'Value', 'Horizontal (side by side)');
+% layoutDrop.Layout.Row = 7;
+% layoutDrop.Layout.Column = [5 6];
+
+% chkColor = uicheckbox(g1, 'Text', 'Color blocks by model', 'Value', true);
+% chkColor.Layout.Row = 8;
+% chkColor.Layout.Column = [1 3];
+
+% chkAutoDelay = uicheckbox(g1, ...
+%     'Text', 'Auto Unit Delay on feedback signals', 'Value', true);
+% safeTooltip(chkAutoDelay, ['Feedback signals get a Unit Delay at that ', ...
+%     'model''s INPUT, which prevents algebraic loops.']);
+% chkAutoDelay.Layout.Row = 8;
+% chkAutoDelay.Layout.Column = [4 6];
+
+% % Row 9: NEW - Force inherited sample times checkbox
+% chkForceInherited = uicheckbox(g1, ...
+%     'Text', 'Force all Inports/Outports/UnitDelays to inherited sample time (-1)', ...
+%     'Value', false);
+% safeTooltip(chkForceInherited, ['When enabled, sweeps all Inport, Outport, and UnitDelay blocks ', ...
+%     'across the parent model AND all child models, overriding their SampleTime to "-1" (Inherited). ', ...
+%     'All changes are logged before being applied. WARNING: This modifies and saves child .slx files.']);
+% chkForceInherited.Layout.Row = 9;
+% chkForceInherited.Layout.Column = [1 6];
+
+% previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
+%     'FontSize', 12, ...
+%     'ButtonPushedFcn', @doPreview);
+% safeTooltip(previewBtn, ['Validates sample-time & model referencing compatibility ', ...
+%     'and displays the full connection plan. Must be run before Generate.']);
+% previewBtn.Layout.Row = 9;
+% previewBtn.Layout.Column = [2 3];
+
+% generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
+%     'FontSize', 12, ...
+%     'FontWeight', 'bold', 'Enable', 'off', 'ButtonPushedFcn', @doGenerate);
+% generateBtn.Layout.Row = 9;
+% generateBtn.Layout.Column = [4 5];
+
+% lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', ...
+%     'FontWeight', 'bold');
+% lblSignals.Layout.Row = 10;
+% lblSignals.Layout.Column = [1 2];
+
+% configureSignalsBtn = uibutton(g1, 'push', ...
+%     'Text', 'Configure Signals', ...
+%     'FontSize', 11, ...
+%     'ButtonPushedFcn', @doConfigureSignals);
+% safeTooltip(configureSignalsBtn, ['Creates Simulink.Signal objects for ', ...
+%     'Inports/Outports of the selected subsystem block.']);
+% configureSignalsBtn.Layout.Row = 10;
+% configureSignalsBtn.Layout.Column = [3 4];
+
+% lblSignalsHint = uilabel(g1, ...
+%     'Text', 'select a Subsystem in the model, then press', ...
+%     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
+% lblSignalsHint.Layout.Row = 10;
+% lblSignalsHint.Layout.Column = [5 6];
+
+% chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
+% chkCfgInports.Layout.Row = 11;
+% chkCfgInports.Layout.Column = [1 2];
+
+% chkCfgOutports = uicheckbox(g1, 'Text', 'Outports', 'Value', true);
+% chkCfgOutports.Layout.Row = 11;
+% chkCfgOutports.Layout.Column = [3 4];
+
+% chkCfgPropagation = uicheckbox(g1, 'Text', 'Propagation', 'Value', true);
+% chkCfgPropagation.Layout.Row = 11;
+% chkCfgPropagation.Layout.Column = 5;
+
+% chkCfgResolver = uicheckbox(g1, 'Text', 'Resolver', 'Value', true);
+% chkCfgResolver.Layout.Row = 11;
+% chkCfgResolver.Layout.Column = 6;
+
+% log1 = uitextarea(g1, 'Editable', 'off', ...
+%     'Value', {'Ready. Choose a models folder to begin.'});
+% log1.Layout.Row = 12;
+% log1.Layout.Column = [1 6];
+% =========================================================================
+%  TAB 1 - BUILD PARENT MODEL (13 Rows)
+% =========================================================================
 g1 = uigridlayout(tab1, [13 6]);
-g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 26, 24, 24, 48, 24, 24, '1x'};
+g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 26, 24, 28, 48, 24, 24, '1x'};
 g1.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
 g1.Padding = [14 10 14 10];
 g1.RowSpacing = 6;
 g1.ColumnSpacing = 8;
 
+% ---- Row 1: hint ----
 hint1 = uilabel(g1, ...
     'Text', ['1) Choose models folder    2) Add/Import models in order    ' ...
     '3) Preview (Validates compatibility & wiring)    4) Generate'], ...
@@ -130,6 +367,7 @@ hint1 = uilabel(g1, ...
 hint1.Layout.Row = 1;
 hint1.Layout.Column = [1 6];
 
+% ---- Row 2: models folder ----
 lblModelsFolder = uilabel(g1, 'Text', 'Models folder:', 'FontWeight', 'bold');
 lblModelsFolder.Layout.Row = 2;
 lblModelsFolder.Layout.Column = 1;
@@ -142,16 +380,15 @@ modelsFolderEdit.Layout.Row = 2;
 modelsFolderEdit.Layout.Column = [2 5];
 
 browseModelsBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @browseModelsFolder);
+    'FontSize', 11, 'ButtonPushedFcn', @browseModelsFolder);
 browseModelsBtn.Layout.Row = 2;
 browseModelsBtn.Layout.Column = 6;
 
+% ---- Row 3: list headers + filter ----
 lblAvail = uilabel(g1, 'Text', 'Available models:', 'FontWeight', 'bold');
 lblAvail.Layout.Row = 3;
 lblAvail.Layout.Column = 1;
 
-% search box: filters the available-models list while you type
 filterEdit = uieditfield(g1, 'text', ...
     'Placeholder', 'Type to filter...', ...
     'ValueChangedFcn', @onAvailableFilterChanged);
@@ -161,16 +398,15 @@ safeTooltip(filterEdit, ['Type part of a model or subfolder name and ', ...
     'press Enter to shorten the list; clear the box and press Enter ', ...
     'to show every model again.']);
 
-lblSel = uilabel(g1, 'Text', 'Selected models (order matters):', ...
-    'FontWeight', 'bold');
+lblSel = uilabel(g1, 'Text', 'Selected models (order matters):', 'FontWeight', 'bold');
 lblSel.Layout.Row = 3;
 lblSel.Layout.Column = [4 6];
 
+% ---- Row 4: lists + buttons ----
 availableList = uilistbox(g1);
 availableList.Layout.Row = 4;
 availableList.Layout.Column = [1 2];
-safeTooltip(availableList, ...
-    'Ctrl+click or Shift+click to select several models at once');
+safeTooltip(availableList, 'Ctrl+click or Shift+click to select several models at once');
 
 btnGrid = uigridlayout(g1, [7 1]);
 btnGrid.Layout.Row = 4;
@@ -178,53 +414,33 @@ btnGrid.Layout.Column = 3;
 btnGrid.Padding = [2 2 2 2];
 btnGrid.RowSpacing = 5;
 
-addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @addModel);
-addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @addAllModels);
+addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', 'FontSize', 11, 'ButtonPushedFcn', @addModel);
+addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', 'FontSize', 11, 'ButtonPushedFcn', @addAllModels);
 safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
-    'when a search filter is active, only the matching models ', ...
-    'are added.']);
-
-importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @importFromExcel);
+    'when a search filter is active, only the matching models are added.']);
+importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', 'FontSize', 11, 'ButtonPushedFcn', @importFromExcel);
 safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
     'to import an ordered list of models from Column A.']);
-
-removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @removeModel);
-clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @clearSelectedModels);
-safeTooltip(clearListBtn, ['Empties the selected-models list only - ', ...
-    'folders and options stay as they are.']);
-upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @moveModelUp);
-downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @moveModelDown);
+removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', 'FontSize', 11, 'ButtonPushedFcn', @removeModel);
+clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', 'FontSize', 11, 'ButtonPushedFcn', @clearSelectedModels);
+safeTooltip(clearListBtn, 'Empties the selected-models list only - folders and options stay as they are.');
+upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', 'FontSize', 11, 'ButtonPushedFcn', @moveModelUp);
+downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down', 'FontSize', 11, 'ButtonPushedFcn', @moveModelDown);
 
 selectedList = uilistbox(g1);
 selectedList.Layout.Row = 4;
 selectedList.Layout.Column = [4 6];
-safeTooltip(selectedList, ...
-    'Ctrl+click or Shift+click to select several models at once');
+safeTooltip(selectedList, 'Ctrl+click or Shift+click to select several models at once');
 
 enableMultiSelect(availableList);
 enableMultiSelect(selectedList);
 
+% ---- Row 5: name + save folder ----
 lblName = uilabel(g1, 'Text', 'Generated model name:', 'FontWeight', 'bold');
 lblName.Layout.Row = 5;
 lblName.Layout.Column = 1;
 
-nameEdit = uieditfield(g1, 'text', ...
-    'Placeholder', 'GeneratedReferenceModel', ...
-    'Value', '');
+nameEdit = uieditfield(g1, 'text', 'Placeholder', 'GeneratedReferenceModel', 'Value', '');
 nameEdit.Layout.Row = 5;
 nameEdit.Layout.Column = [2 3];
 
@@ -232,18 +448,15 @@ lblSave = uilabel(g1, 'Text', 'Save in folder:', 'FontWeight', 'bold');
 lblSave.Layout.Row = 5;
 lblSave.Layout.Column = 4;
 
-saveFolderEdit = uieditfield(g1, 'text', ...
-    'Value', '', ...
-    'Placeholder', '(same as the models folder)');
+saveFolderEdit = uieditfield(g1, 'text', 'Value', '', 'Placeholder', '(same as the models folder)');
 saveFolderEdit.Layout.Row = 5;
 saveFolderEdit.Layout.Column = 5;
 
-browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @browseSaveFolder);
+browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', 'FontSize', 11, 'ButtonPushedFcn', @browseSaveFolder);
 browseSaveBtn.Layout.Row = 5;
 browseSaveBtn.Layout.Column = 6;
 
+% ---- Row 6: wrap subsystem ----
 chkWrap = uicheckbox(g1, ...
     'Text', 'Create main subsystem (wrap all contents)', 'Value', true);
 safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
@@ -251,6 +464,7 @@ safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
 chkWrap.Layout.Row = 6;
 chkWrap.Layout.Column = [1 6];
 
+% ---- Row 7: connect via + arrangement ----
 lblConnMethod = uilabel(g1, 'Text', 'Connect via:');
 lblConnMethod.Layout.Row = 7;
 lblConnMethod.Layout.Column = 1;
@@ -274,6 +488,7 @@ layoutDrop = uidropdown(g1, ...
 layoutDrop.Layout.Row = 7;
 layoutDrop.Layout.Column = [5 6];
 
+% ---- Row 8: color + auto delay ----
 chkColor = uicheckbox(g1, 'Text', 'Color blocks by model', 'Value', true);
 chkColor.Layout.Row = 8;
 chkColor.Layout.Column = [1 3];
@@ -285,7 +500,7 @@ safeTooltip(chkAutoDelay, ['Feedback signals get a Unit Delay at that ', ...
 chkAutoDelay.Layout.Row = 8;
 chkAutoDelay.Layout.Column = [4 6];
 
-% Row 9: NEW - Force inherited sample times checkbox
+% ---- Row 9: force inherited sample times (OWN row, full width) ----
 chkForceInherited = uicheckbox(g1, ...
     'Text', 'Force all Inports/Outports/UnitDelays to inherited sample time (-1)', ...
     'Value', false);
@@ -295,61 +510,61 @@ safeTooltip(chkForceInherited, ['When enabled, sweeps all Inport, Outport, and U
 chkForceInherited.Layout.Row = 9;
 chkForceInherited.Layout.Column = [1 6];
 
+% ---- Row 10: Preview + Generate (OWN row, height 48) ----
 previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
-    'FontSize', 12, ...
-    'ButtonPushedFcn', @doPreview);
+    'FontSize', 12, 'ButtonPushedFcn', @doPreview);
 safeTooltip(previewBtn, ['Validates sample-time & model referencing compatibility ', ...
     'and displays the full connection plan. Must be run before Generate.']);
-previewBtn.Layout.Row = 9;
+previewBtn.Layout.Row = 10;
 previewBtn.Layout.Column = [2 3];
 
 generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
-    'FontSize', 12, ...
-    'FontWeight', 'bold', 'Enable', 'off', 'ButtonPushedFcn', @doGenerate);
-generateBtn.Layout.Row = 9;
+    'FontSize', 12, 'FontWeight', 'bold', 'Enable', 'off', ...
+    'ButtonPushedFcn', @doGenerate);
+generateBtn.Layout.Row = 10;
 generateBtn.Layout.Column = [4 5];
 
-lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', ...
-    'FontWeight', 'bold');
-lblSignals.Layout.Row = 10;
+% ---- Row 11: subsystem signals header ----
+lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', 'FontWeight', 'bold');
+lblSignals.Layout.Row = 11;
 lblSignals.Layout.Column = [1 2];
 
 configureSignalsBtn = uibutton(g1, 'push', ...
-    'Text', 'Configure Signals', ...
-    'FontSize', 11, ...
+    'Text', 'Configure Signals', 'FontSize', 11, ...
     'ButtonPushedFcn', @doConfigureSignals);
 safeTooltip(configureSignalsBtn, ['Creates Simulink.Signal objects for ', ...
     'Inports/Outports of the selected subsystem block.']);
-configureSignalsBtn.Layout.Row = 10;
+configureSignalsBtn.Layout.Row = 11;
 configureSignalsBtn.Layout.Column = [3 4];
 
 lblSignalsHint = uilabel(g1, ...
     'Text', 'select a Subsystem in the model, then press', ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
-lblSignalsHint.Layout.Row = 10;
+lblSignalsHint.Layout.Row = 11;
 lblSignalsHint.Layout.Column = [5 6];
 
+% ---- Row 12: inports/outports/propagation/resolver ----
 chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
-chkCfgInports.Layout.Row = 11;
+chkCfgInports.Layout.Row = 12;
 chkCfgInports.Layout.Column = [1 2];
 
 chkCfgOutports = uicheckbox(g1, 'Text', 'Outports', 'Value', true);
-chkCfgOutports.Layout.Row = 11;
+chkCfgOutports.Layout.Row = 12;
 chkCfgOutports.Layout.Column = [3 4];
 
 chkCfgPropagation = uicheckbox(g1, 'Text', 'Propagation', 'Value', true);
-chkCfgPropagation.Layout.Row = 11;
+chkCfgPropagation.Layout.Row = 12;
 chkCfgPropagation.Layout.Column = 5;
 
 chkCfgResolver = uicheckbox(g1, 'Text', 'Resolver', 'Value', true);
-chkCfgResolver.Layout.Row = 11;
+chkCfgResolver.Layout.Row = 12;
 chkCfgResolver.Layout.Column = 6;
 
+% ---- Row 13: log ----
 log1 = uitextarea(g1, 'Editable', 'off', ...
     'Value', {'Ready. Choose a models folder to begin.'});
-log1.Layout.Row = 12;
+log1.Layout.Row = 13;
 log1.Layout.Column = [1 6];
-
 % =========================================================================
 %  TAB 2 - UNIT DELAYS (Moved to separate tab)
 % =========================================================================
