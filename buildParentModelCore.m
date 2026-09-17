@@ -162,7 +162,9 @@ try
         
         if options.AllowMultipleInstances
             try
-                set_param(modelNames{modelIndex}, 'ModelReferenceNumInstancesAllowed', 'Multi');
+                if ~strcmp(get_param(modelNames{modelIndex}, 'ModelReferenceNumInstancesAllowed'), 'Multi')
+                    set_param(modelNames{modelIndex}, 'ModelReferenceNumInstancesAllowed', 'Multi');
+                end
             catch
             end
         end
@@ -200,7 +202,7 @@ if options.ForceInheritedSampleTimes
         result.Notes{end + 1} = summaryLine;
         result.Notes{end + 1} = '=========================================================';
         
-        % Apply changes to child models immediately
+        % Apply changes to child models
         for cIdx = 1:numel(allChanges)
             ch = allChanges{cIdx};
             try
@@ -208,19 +210,6 @@ if options.ForceInheritedSampleTimes
             catch applyErr
                 result.Warnings{end + 1} = sprintf( ...
                     'Failed to set SampleTime on %s: %s', ch.BlockPath, applyErr.message); %#ok<AGROW>
-            end
-        end
-        
-        % Save dirty child models
-        for mIdx = 1:numModels
-            mdlName = modelNames{mIdx};
-            if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
-                try
-                    save_system(mdlName);
-                catch saveErr
-                    result.Warnings{end + 1} = sprintf( ...
-                        'Failed to save child model "%s": %s', mdlName, saveErr.message); %#ok<AGROW>
-                end
             end
         end
     end
@@ -517,10 +506,8 @@ try
         progressFcn(0.65, 'Adding Model Reference blocks (From/Goto style)...');
 
         modelOutputKeys = cell(numModels, 1);
-        modelInputKeys = cell(numModels, 1);
         usedTags = {};
 
-        % Construct model-specific unique From/Goto tags
         for modelIndex = 1:numModels
             outputs = modelInfo(modelIndex).OutputNames;
             tags = cell(numel(outputs), 1);
@@ -528,7 +515,6 @@ try
                 sigName = outputs{outputIndex};
                 baseTag = safeName(sigName);
                 
-                % Disambiguate if signal name exists across multiple models
                 key = normKey(sigName, caseInsensitive);
                 isDup = false;
                 for otherM = 1:numModels
@@ -648,9 +634,7 @@ try
             blockPos = modelInfo(modelIndex).BlockPos;
             for inputIndex = 1:numel(modelInfo(modelIndex).InputNames)
                 sig = modelInfo(modelIndex).InputNames{inputIndex};
-                key = normKey(sig, caseInsensitive);
                 
-                % Find which model tag feeds this input
                 tag = safeName(sig);
                 for connIdx = 1:numel(internalConnections)
                     conn = internalConnections(connIdx);
@@ -900,7 +884,6 @@ try
         end
     end
 
-    % Also apply sample-time override to generated target model if option enabled
     if options.ForceInheritedSampleTimes
         targetChanges = collectSampleTimeChanges(targetModel);
         for cIdx = 1:numel(targetChanges)
@@ -928,8 +911,25 @@ try
         return;
     end
 
-    progressFcn(0.99, 'Saving...');
-    save_system(targetModel, targetModelFile);
+    progressFcn(0.99, 'Saving parent and referenced models...');
+    
+    % Save any dirty child models before saving target model
+    for mIdx = 1:numModels
+        mdlName = modelNames{mIdx};
+        if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
+            try
+                save_system(mdlName);
+            catch
+            end
+        end
+    end
+
+    % Save target model safely with SaveDirtyReferencedModels enabled
+    try
+        save_system(targetModel, targetModelFile, 'SaveDirtyReferencedModels', 'on');
+    catch
+        save_system(targetModel, targetModelFile);
+    end
     
     strayCacheFile = fullfile(pwd, [targetModel '.slxc']);
     destCacheFolder = fileparts(targetModelFile);
