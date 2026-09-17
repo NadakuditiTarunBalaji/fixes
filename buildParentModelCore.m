@@ -176,7 +176,7 @@ catch loadError
 end
 
 % =========================================================================
-% EARLY EXECUTION: FORCE INHERITED SAMPLE TIMES (-1) ACROSS CHILD MODELS
+% OPTIONAL: FORCE INHERITED SAMPLE TIMES (-1) ACROSS CHILD MODELS
 % =========================================================================
 if options.ForceInheritedSampleTimes
     progressFcn(0.20, 'Scanning & enforcing inherited sample times (-1)...');
@@ -210,6 +210,19 @@ if options.ForceInheritedSampleTimes
             catch applyErr
                 result.Warnings{end + 1} = sprintf( ...
                     'Failed to set SampleTime on %s: %s', ch.BlockPath, applyErr.message); %#ok<AGROW>
+            end
+        end
+        
+        % Save modified child models
+        for mIdx = 1:numModels
+            mdlName = modelNames{mIdx};
+            if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
+                try
+                    save_system(mdlName);
+                catch saveErr
+                    result.Warnings{end + 1} = sprintf( ...
+                        'Failed to save child model "%s": %s', mdlName, saveErr.message); %#ok<AGROW>
+                end
             end
         end
     end
@@ -666,9 +679,13 @@ try
                 if inputIsFeedback
                     delayName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
                     delayLeft = fromRight + fromToDelayGap;
-                    add_block('built-in/UnitDelay', [containerSystem '/' delayName], ...
-                        'SampleTime', '-1', ...
-                        'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]);
+                    
+                    delayParams = {'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]};
+                    if options.ForceInheritedSampleTimes
+                        delayParams = [{'SampleTime', '-1'}, delayParams];
+                    end
+                    
+                    add_block('built-in/UnitDelay', [containerSystem '/' delayName], delayParams{:});
                     add_line(containerSystem, [fromName '/1'], [delayName '/1'], 'autorouting', 'off');
                     add_line(containerSystem, [delayName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
                     autoDelayCount = autoDelayCount + 1;
@@ -786,7 +803,13 @@ try
                 if dLeft < srcPos(3) + blockSpacing, dLeft = round((srcPos(3) + dstPos(1)) / 2) - 20; end
                 dY = round(dstPos(2));
                 dName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
-                add_block('built-in/UnitDelay', [containerSystem '/' dName], 'SampleTime', '-1', 'Position', [dLeft, dY - 10, dLeft + 40, dY + 10]);
+                
+                delayParams = {'Position', [dLeft, dY - 10, dLeft + 40, dY + 10]};
+                if options.ForceInheritedSampleTimes
+                    delayParams = [{'SampleTime', '-1'}, delayParams];
+                end
+                
+                add_block('built-in/UnitDelay', [containerSystem '/' dName], delayParams{:});
                 dPorts = get_param([containerSystem '/' dName], 'PortHandles');
                 addLineRouted(containerSystem, routeMode, srcH, dPorts.Inport(1));
                 addLineRouted(containerSystem, routeMode, dPorts.Outport(1), dstH);
@@ -913,7 +936,6 @@ try
 
     progressFcn(0.99, 'Saving parent and referenced models...');
     
-    % Save any dirty child models before saving target model
     for mIdx = 1:numModels
         mdlName = modelNames{mIdx};
         if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
@@ -924,7 +946,6 @@ try
         end
     end
 
-    % Save target model safely with SaveDirtyReferencedModels enabled
     try
         save_system(targetModel, targetModelFile, 'SaveDirtyReferencedModels', 'on');
     catch
@@ -948,9 +969,7 @@ try
     end
     open_system(targetModel);
 
-    if options.CloseReferencedModels
-        closeLoadedModels(loadedByUs);
-    end
+    if options.CloseReferencedModels, closeLoadedModels(loadedByUs); end
     
     result.Success = true;
     progressFcn(1, 'Done.');

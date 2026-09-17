@@ -80,26 +80,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         return;
     end
 
-    % --- STEP 1.5: If ForceInheritedSampleTimes is ON, apply to child models
-    if forceInherited
-        progressFcn(0.20, 'Applying sample-time overrides (-1) for validation...');
-        for i = 1:numel(loadedModels)
-            mName = loadedModels{i};
-            try
-                inports = find_system(mName, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Inport');
-                for k = 1:numel(inports), try set_param(inports{k}, 'SampleTime', '-1'); catch, end; end
-                
-                outports = find_system(mName, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Outport');
-                for k = 1:numel(outports), try set_param(outports{k}, 'SampleTime', '-1'); catch, end; end
-                
-                delays = find_system(mName, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'UnitDelay');
-                for k = 1:numel(delays), try set_param(delays{k}, 'SampleTime', '-1'); catch, end; end
-            catch
-            end
-        end
-    end
-
-    % --- STEP 2: Fast Static Sample-Time Check ----------------------------
+    % --- STEP 2: Fast Static Sample-Time Check (Read-Only) -----------------
     progressFcn(0.30, 'Performing static sample-time checks...');
     allSampleTimes = [];
 
