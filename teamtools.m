@@ -23,8 +23,19 @@ if ~isempty(appFolder)
     addpath(appFolder);
 end
 
-% ---- session log: log.txt in the current folder -------------------------
+% ---- Clear all saved preferences so tool starts fresh every time ----------
+try
+    if ispref('teamtools')
+        rmpref('teamtools');
+    end
+catch
+end
+
+% ---- Check if log.txt exists (determines whether to show tutorial) --------
 logPath = fullfile(pwd, 'log.txt');
+isReturningUser = isfile(logPath);
+
+% ---- session log: log.txt in the current folder -------------------------
 prevDiaryOn = false;
 prevDiaryFile = '';
 try
@@ -99,7 +110,7 @@ tabs.Layout.Row = 2;
 tabs.Layout.Column = 1;
 
 tab1 = uitab(tabs, 'Title', 'Build Parent Model');
-tab3 = uitab(tabs, 'Title', 'Unit Delays'); % <<< NEW: Dedicated Unit Delay Tab
+tab3 = uitab(tabs, 'Title', 'Unit Delays');
 tab2 = uitab(tabs, 'Title', 'Extract Attributes');
 
 % =========================================================================
@@ -124,7 +135,7 @@ lblModelsFolder.Layout.Row = 2;
 lblModelsFolder.Layout.Column = 1;
 
 modelsFolderEdit = uieditfield(g1, 'text', ...
-    'Value', getpref('teamtools', 'ModelsFolder', ''), ...
+    'Value', '', ...
     'Placeholder', 'Folder that contains the .slx/.mdl models', ...
     'ValueChangedFcn', @onModelsFolderChanged);
 modelsFolderEdit.Layout.Row = 2;
@@ -213,7 +224,7 @@ lblName.Layout.Column = 1;
 
 nameEdit = uieditfield(g1, 'text', ...
     'Placeholder', 'GeneratedReferenceModel', ...
-    'Value', getpref('teamtools', 'ModelName', ''));
+    'Value', '');
 nameEdit.Layout.Row = 5;
 nameEdit.Layout.Column = [2 3];
 
@@ -222,7 +233,7 @@ lblSave.Layout.Row = 5;
 lblSave.Layout.Column = 4;
 
 saveFolderEdit = uieditfield(g1, 'text', ...
-    'Value', getpref('teamtools', 'SaveFolder', ''), ...
+    'Value', '', ...
     'Placeholder', '(same as the models folder)');
 saveFolderEdit.Layout.Row = 5;
 saveFolderEdit.Layout.Column = 5;
@@ -449,7 +460,7 @@ lblSearch.Layout.Row = 4;
 lblSearch.Layout.Column = 1;
 
 searchEdit = uieditfield(g2, 'text', ...
-    'Value', getpref('teamtools', 'SearchFolder', ''), ...
+    'Value', '', ...
     'Placeholder', 'Parent folder containing the .m files to scan');
 searchEdit.Layout.Row = 4;
 searchEdit.Layout.Column = [2 5];
@@ -465,7 +476,7 @@ lblDest.Layout.Row = 5;
 lblDest.Layout.Column = 1;
 
 destEdit = uieditfield(g2, 'text', ...
-    'Value', getpref('teamtools', 'OutputFile', ''), ...
+    'Value', '', ...
     'Placeholder', 'ExtractedAttributes.m');
 destEdit.Layout.Row = 5;
 destEdit.Layout.Column = [2 5];
@@ -512,11 +523,14 @@ log2 = uitextarea(g2, 'Editable', 'off', ...
 log2.Layout.Row = 9;
 log2.Layout.Column = [1 6];
 
-% ---- initial content -------------------------------------------------------
-if isfolder(char(strtrim(modelsFolderEdit.Value)))
-    refreshModelList();
-else
-    modelsFolderEdit.Value = '';
+% ---- initial content: always start clean -----------------------------------
+modelsFolderEdit.Value = '';
+availableList.Items = {};
+selectedList.Items = {};
+
+% ---- First-run tutorial (skip if log.txt already existed) ------------------
+if ~isReturningUser
+    showQuickTutorial(app);
 end
 
 % =========================================================================
@@ -576,7 +590,6 @@ if isequal(chosenFolder, 0)
     return;
 end
 modelsFolderEdit.Value = chosenFolder;
-setpref('teamtools', 'ModelsFolder', chosenFolder);
 if isempty(strtrim(saveFolderEdit.Value))
     saveFolderEdit.Value = chosenFolder;
 end
@@ -588,7 +601,6 @@ end
 function onModelsFolderChanged(~, ~)
 candidate = char(strtrim(modelsFolderEdit.Value));
 if isfolder(candidate)
-    setpref('teamtools', 'ModelsFolder', candidate);
     state.LastImportedMissing = {};
     invalidatePreview();
     refreshModelList();
@@ -1015,8 +1027,8 @@ try
 catch
 end
 state.ExtractOutput = '';
-openOutputBtn.Enable = 'on';
-openFolderBtn.Enable = 'on';
+openOutputBtn.Enable = 'off';
+openFolderBtn.Enable = 'off';
 
 logTo(log1, 'All inputs cleared (all tabs). The log is kept.');
 setStatus('All inputs cleared.');
@@ -1091,7 +1103,6 @@ if isequal(chosenFolder, 0)
     return;
 end
 saveFolderEdit.Value = chosenFolder;
-setpref('teamtools', 'SaveFolder', chosenFolder);
 end
 
 function s = integrationStyle()
@@ -1197,13 +1208,13 @@ end
 styleOpts = integrationStyle();
 options = struct( ...
     'PreviewOnly',          true, ...
-    'CaseInsensitiveMatch', true, ... % <<< ENFORCED: always match port names case-insensitively
+    'CaseInsensitiveMatch', true, ...
     'OutputFolder',         saveFolder, ...
     'ConnectionMethod',     styleOpts.ConnectionMethod, ...
     'Layout',               styleOpts.Layout, ...
     'ColorBlocks',          styleOpts.ColorBlocks, ...
     'AutoDelayFeedback',    styleOpts.AutoDelayFeedback, ...
-    'AllowMultipleInstances', true, ... % <<< ENFORCED: always allow multiple instances
+    'AllowMultipleInstances', true, ...
     'BlockSpacing',         styleOpts.BlockSpacing, ...
     'FromModelGap',         styleOpts.FromModelGap, ...
     'ModelGotoGap',         styleOpts.ModelGotoGap, ...
@@ -1302,16 +1313,16 @@ styleOpts = integrationStyle();
 options = struct( ...
     'PreviewOnly',          false, ...
     'Overwrite',            overwrite, ...
-    'BackupExisting',       true, ...  % <<< ENFORCED: always backup existing models (.bak)
-    'CaseInsensitiveMatch', true, ...  % <<< ENFORCED: always match port names case-insensitively
-    'CloseReferencedModels', true, ... % <<< ENFORCED: always close referenced models when done
+    'BackupExisting',       true, ...
+    'CaseInsensitiveMatch', true, ...
+    'CloseReferencedModels', true, ...
     'WrapInSubsystem',      chkWrap.Value, ...
     'OutputFolder',         saveFolder, ...
     'ConnectionMethod',     styleOpts.ConnectionMethod, ...
     'Layout',               styleOpts.Layout, ...
     'ColorBlocks',          styleOpts.ColorBlocks, ...
     'AutoDelayFeedback',    styleOpts.AutoDelayFeedback, ...
-    'AllowMultipleInstances', true, ... % <<< ENFORCED: always allow multiple instances
+    'AllowMultipleInstances', true, ...
     'BlockSpacing',         styleOpts.BlockSpacing, ...
     'FromModelGap',         styleOpts.FromModelGap, ...
     'ModelGotoGap',         styleOpts.ModelGotoGap, ...
@@ -1397,17 +1408,16 @@ if isempty(result.Warnings)
 else
     lines{end + 1} = 'Warnings:';
     for warningIndex = 1:numel(result.Warnings)
-        lines{end + 1} = ['  - ' warningIndex];
+        lines{end + 1} = ['  - ' result.Warnings{warningIndex}];
     end
 end
 lines{end + 1} = '===============================================';
 logMany(log1, lines);
 
 state.LastGeneratedModel = result.TargetModel;
-setpref('teamtools', 'GeneratedModel', result.TargetModel);
 connModelEdit.Value = result.TargetModel;
 destEdit.Value = [result.TargetModel, '_data.m'];
-logTo(log1, sprintf(['Extract destination (Tab 2) set to "%s_data.m" - ', ...
+logTo(log1, sprintf(['Extract destination (Tab 3) set to "%s_data.m" - ', ...
     'edit it there if you want a different name.'], ...
     result.TargetModel));
 refreshConnections();
@@ -1459,7 +1469,7 @@ try
     [connections, connStats] = listModelConnections(modelName);
 catch listError
     insertDelayBtn.Enable = 'off';
-    logTo(log3, ['ERROR: ' errorDetails(listError)]); % Log directed to Tab 2's Log area
+    logTo(log3, ['ERROR: ' errorDetails(listError)]);
     notify(app, errorDetails(listError), 'Could not list connections', 'error');
     return;
 end
@@ -1580,12 +1590,12 @@ try
         open_system(connection.System);
     catch
     end
-    logTo(log3, result.Message); % Log directed to Tab 2's Log area
+    logTo(log3, result.Message);
     notify(app, sprintf('%s\n\nThe model has been saved.', result.Message), ...
         'Unit Delay inserted', 'success');
     refreshConnections();
 catch delayError
-    logTo(log3, ['ERROR: ' errorDetails(delayError)]); % Log directed to Tab 2's Log area
+    logTo(log3, ['ERROR: ' errorDetails(delayError)]);
     notify(app, errorDetails(delayError), 'Could not insert Unit Delay', 'error');
 end
 end
@@ -1678,7 +1688,6 @@ if isequal(chosenFolder, 0)
     return;
 end
 searchEdit.Value = chosenFolder;
-setpref('teamtools', 'SearchFolder', chosenFolder);
 end
 
 function browseOutputFile(~, ~)
@@ -1703,7 +1712,6 @@ elseif ~strcmpi(extension, '.m')
 end
 outputFile = fullfile(folder, name);
 destEdit.Value = outputFile;
-setpref('teamtools', 'OutputFile', outputFile);
 end
 
 function doExtract(~, ~)
@@ -1786,7 +1794,6 @@ if result.Cancelled
 end
 
 state.ExtractOutput = result.OutputFile;
-setpref('teamtools', 'OutputFile', result.OutputFile);
 openOutputBtn.Enable = 'on';
 openFolderBtn.Enable = 'on';
 
@@ -1824,6 +1831,137 @@ end
 % =========================================================================
 %  LOCAL HELPER FUNCTIONS
 % =========================================================================
+function showQuickTutorial(appFigure)
+% showQuickTutorial Displays a multi-step quick-start guide for first-time users.
+%   The user can skip the entire tutorial at any step.
+
+    steps = {
+        ['Welcome to Simulink Team Tools!\n\n', ...
+         'This tool helps you:\n', ...
+         '  1. Build a parent Simulink model from multiple referenced child models\n', ...
+         '  2. Manage Unit Delays to resolve algebraic loops\n', ...
+         '  3. Extract signal attributes from .m files\n\n', ...
+         'Press "Next" to learn the basics, or "Skip Tutorial" to start immediately.']
+        
+        ['STEP 1: Build Parent Model (Tab 1)\n\n', ...
+         '  1. Click "Browse..." to select the folder containing your .slx/.mdl models\n', ...
+         '  2. Select models from the left list and click "Add >>" to add them\n', ...
+         '     - You can also import an ordered list from Excel ("Import Excel...")\n', ...
+         '     - Use the search box to filter models by name\n', ...
+         '  3. Enter a name for the generated parent model\n', ...
+         '  4. Click "Preview" to validate compatibility and see the wiring plan\n', ...
+         '  5. Click "Generate" to create the parent model\n\n', ...
+         'Tip: The order of models in the selected list determines the block layout.']
+        
+        ['STEP 2: Connection Options\n\n', ...
+         '  Connect via:\n', ...
+         '    - "From/Goto blocks": Clean routing with Goto/From tags (recommended)\n', ...
+         '    - "Direct lines": Physical signal lines between ports\n\n', ...
+         '  Arrangement:\n', ...
+         '    - "Horizontal": Models placed side by side\n', ...
+         '    - "Vertical": Models stacked top to bottom\n\n', ...
+         '  Options:\n', ...
+         '    - "Color blocks by model": Each model gets a unique color\n', ...
+         '    - "Auto Unit Delay": Automatically inserts delays on feedback signals\n', ...
+         '    - "Create main subsystem": Wraps everything inside one subsystem']
+        
+        ['STEP 3: Unit Delays (Tab 2)\n\n', ...
+         '  Use this tab AFTER generating a model to resolve algebraic loops:\n\n', ...
+         '  1. The model name is auto-filled after generation\n', ...
+         '  2. Click "Refresh list" to scan all model-to-model connections\n', ...
+         '  3. Pick a connection from the dropdown\n', ...
+         '  4. Click "Insert Unit Delay" to break the loop\n\n', ...
+         'Tip: Use the checkboxes to filter connections that already have delays.']
+        
+        ['STEP 4: Extract Attributes (Tab 3)\n\n', ...
+         '  1. Open your generated model in Simulink\n', ...
+         '  2. Click on a Subsystem block in the model\n', ...
+         '  3. Switch to the "Extract Attributes" tab and click "Refresh"\n', ...
+         '  4. Choose the search folder containing your .m attribute files\n', ...
+         '  5. Set the destination file name (.m)\n', ...
+         '  6. Click "Extract" to collect all matching records\n\n', ...
+         'Tip: Port names from the subsystem are used as search tags.']
+        
+        ['STEP 5: Configure Subsystem Signals\n\n', ...
+         '  Located at the bottom of Tab 1:\n\n', ...
+         '  1. Select a Subsystem block in Simulink\n', ...
+         '  2. Choose which ports to process (Inports, Outports, or both)\n', ...
+         '  3. Click "Configure Signals" to create Simulink.Signal objects\n\n', ...
+         'This is useful for setting up signal properties like data types,\n', ...
+         'dimensions, and sample times on subsystem boundaries.']
+        
+        ['You are all set!\n\n', ...
+         'Key things to remember:\n', ...
+         '  - Always click "Preview" before "Generate"\n', ...
+         '  - The tool automatically handles sample times (sets all ports to inherited)\n', ...
+         '  - Rate Transition blocks are never inserted\n', ...
+         '  - Backups (.bak) are always created before overwriting\n', ...
+         '  - Check the log area at the bottom of each tab for details\n\n', ...
+         'The tool starts fresh every time - no saved settings carry over.\n\n', ...
+         'Happy modeling!']
+    };
+
+    stepTitles = {
+        'Welcome'
+        'Build Parent Model'
+        'Connection Options'
+        'Unit Delays'
+        'Extract Attributes'
+        'Configure Signals'
+        'Ready!'
+    };
+
+    for stepIdx = 1:numel(steps)
+        isLastStep = (stepIdx == numel(steps));
+        
+        if isLastStep
+            btnLabels = {'Start Using Tool'};
+        else
+            btnLabels = {'Next', 'Skip Tutorial'};
+        end
+        
+        try
+            if isLastStep
+                answer = uiconfirm(appFigure, ...
+                    sprintf(steps{stepIdx}), ...
+                    sprintf('Quick Tutorial (%d/%d) - %s', stepIdx, numel(steps), stepTitles{stepIdx}), ...
+                    'Options', btnLabels, ...
+                    'DefaultOption', btnLabels{1}, ...
+                    'Icon', 'info');
+            else
+                answer = uiconfirm(appFigure, ...
+                    sprintf(steps{stepIdx}), ...
+                    sprintf('Quick Tutorial (%d/%d) - %s', stepIdx, numel(steps), stepTitles{stepIdx}), ...
+                    'Options', btnLabels, ...
+                    'DefaultOption', 'Next', ...
+                    'CancelOption', 'Skip Tutorial', ...
+                    'Icon', 'info');
+            end
+        catch
+            % Fallback for older MATLAB versions
+            try
+                answer = questdlg(sprintf(steps{stepIdx}), ...
+                    sprintf('Quick Tutorial (%d/%d)', stepIdx, numel(steps)), ...
+                    btnLabels{:}, btnLabels{1});
+            catch
+                return;
+            end
+        end
+        
+        if ischar(answer)
+            answerStr = answer;
+        elseif isstruct(answer) && isfield(answer, 'SelectedButton')
+            answerStr = char(answer.SelectedButton);
+        else
+            answerStr = '';
+        end
+        
+        if strcmp(answerStr, 'Skip Tutorial') || isempty(answerStr)
+            return;
+        end
+    end
+end
+
 function ports = getSubsystemPorts(subsystemHandle)
 if nargin < 1 || isempty(subsystemHandle)
     subsystemHandle = gcbh;
@@ -2149,7 +2287,6 @@ end
 
 function files = discoverModelFiles(folder)
 % discoverModelFiles Finds all .slx and .mdl files, ignoring slprj/cache/hidden folders
-%   This matches our high-reliability core engine logic.
     slxFiles = dir(fullfile(folder, '**', '*.slx'));
     mdlFiles = dir(fullfile(folder, '**', '*.mdl'));
     files = [slxFiles; mdlFiles];
@@ -2216,7 +2353,7 @@ if ~isempty(result.ConfigParamNames)
     end
 end
 lines{end + 1} = sprintf('Internal connections (%d):', result.Counts.Internal);
-for connectionIndex = 1:numel(connectionIndex)
+for connectionIndex = 1:numel(result.InternalConnections)
     connection = result.InternalConnections(connectionIndex);
     lines{end + 1} = sprintf('  %s.%s  -->  %s.%s', ...
         connection.SrcModel, connection.SrcPort, ...
