@@ -25,18 +25,64 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
     end
 
     % --- STEP 1: Fast Disk Search & Loading (Parallel-friendly load) -------
+    % progressFcn(0.10, sprintf('Loading %d child models into memory...', numModels));
+    % openedByUs = {};
+    % loadedModels = {};
+
+    % % Pre-discover paths to avoid searching disk inside the loop
+    % allFiles = [dir(fullfile(modelsFolder, '**', '*.slx')); dir(fullfile(modelsFolder, '**', '*.mdl'))];
+    % allFiles = allFiles(~[allFiles.isdir]);
+    
+    % fileMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
+    % for fIdx = 1:numel(allFiles)
+    %     [~, bName] = fileparts(allFiles(fIdx).name);
+    %     fileMap(lower(bName)) = fullfile(allFiles(fIdx).folder, allFiles(fIdx).name);
+    % end
+
+    % for i = 1:numModels
+    %     modelName = selectedModels{i};
+    %     try
+    %         if ~bdIsLoaded(modelName)
+    %             key = lower(modelName);
+    %             if isKey(fileMap, key)
+    %                 load_system(fileMap(key));
+    %                 openedByUs{end + 1} = modelName; %#ok<AGROW>
+    %             else
+    %                 report.ModelsSkipped = report.ModelsSkipped + 1;
+    %                 continue;
+    %             end
+    %         end
+    %         loadedModels{end + 1} = modelName; %#ok<AGROW>
+    %     catch loadErr
+    %         report.ModelsSkipped = report.ModelsSkipped + 1;
+    %         report.Issues(end + 1) = makeIssue('LoadError', 'error', ...
+    %             modelName, '', ...
+    %             sprintf('Could not load model: %s', loadErr.message), ...
+    %             'Ensure the model file is not corrupted.'); %#ok<AGROW>
+    %     end
+    % end
+
+    % report.ModelsChecked = numel(loadedModels);
+    % if isempty(loadedModels)
+    %     report.Summary = 'No models could be loaded.';
+    %     return;
+    % end
+        % --- STEP 1: Pre-map and Load Models (Deduplication-Safe) --------------
     progressFcn(0.10, sprintf('Loading %d child models into memory...', numModels));
     openedByUs = {};
     loadedModels = {};
 
-    % Pre-discover paths to avoid searching disk inside the loop
     allFiles = [dir(fullfile(modelsFolder, '**', '*.slx')); dir(fullfile(modelsFolder, '**', '*.mdl'))];
     allFiles = allFiles(~[allFiles.isdir]);
     
     fileMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
     for fIdx = 1:numel(allFiles)
         [~, bName] = fileparts(allFiles(fIdx).name);
-        fileMap(lower(bName)) = fullfile(allFiles(fIdx).folder, allFiles(fIdx).name);
+        key = lower(bName);
+        % If key does NOT exist yet, store it (keeps the first occurrence)
+        if ~isKey(fileMap, key)
+            fileMap(key) = fullfile(allFiles(fIdx).folder, allFiles(fIdx).name);
+        end
     end
 
     for i = 1:numModels
@@ -55,16 +101,14 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
             loadedModels{end + 1} = modelName; %#ok<AGROW>
         catch loadErr
             report.ModelsSkipped = report.ModelsSkipped + 1;
-            report.Issues(end + 1) = makeIssue('LoadError', 'error', ...
-                modelName, '', ...
-                sprintf('Could not load model: %s', loadErr.message), ...
-                'Ensure the model file is not corrupted.'); %#ok<AGROW>
+            report.Issues(end + 1) = makeIssue('LoadError', 'error', modelName, '', ...
+                sprintf('Could not load model: %s', loadErr.message), 'Check file integrity.'); %#ok<AGROW>
         end
     end
 
     report.ModelsChecked = numel(loadedModels);
     if isempty(loadedModels)
-        report.Summary = 'No models could be loaded.';
+        report.LogLines = {'ERROR: No models could be loaded from the selected folder.'};
         return;
     end
 

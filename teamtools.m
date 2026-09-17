@@ -586,6 +586,56 @@ elseif ~isempty(candidate)
 end
 end
 
+% function refreshModelList()
+% folder = char(strtrim(modelsFolderEdit.Value));
+% if ~isfolder(folder)
+%     return;
+% end
+% files = discoverModelFiles(folder);
+% if isempty(files)
+%     availableList.Items = {'(no .slx or .mdl files found)'};
+%     state.AvailableNames = {};
+%     state.AvailableLabels = {};
+%     setStatus(['No .slx or .mdl files found in: ' folder]);
+%     return;
+% end
+
+% labels = cell(numel(files), 1);
+% names = cell(numel(files), 1);
+% for fileIndex = 1:numel(files)
+%     [~, modelName] = fileparts(files(fileIndex).name);
+%     names{fileIndex} = modelName;
+%     relativeFolder = relativePart(files(fileIndex).folder, folder);
+%     if isempty(relativeFolder)
+%         labels{fileIndex} = modelName;
+%     else
+%         labels{fileIndex} = sprintf('%s  (%s)', modelName, relativeFolder);
+%     end
+% end
+
+% state.AvailableNames = names;
+% state.AvailableLabels = labels;
+% updateAvailableLabels();
+
+% duplicateNames = unique(names);
+% if numel(duplicateNames) < numel(names)
+%     logTo(log1, ['Warning: some model filenames appear more than once ', ...
+%         'in different subfolders. Keep filenames unique - duplicates ', ...
+%         'cannot be selected.']);
+% end
+% if isempty(strtrim(state.AvailableFilter))
+%     setStatus(sprintf('%d model(s) found.', numel(files)));
+% else
+%     foundShown = numel(availableList.Items);
+%     if foundShown == 1 && ...
+%             strcmp(availableList.Items{1}, '(no matching models)')
+%         foundShown = 0;
+%     end
+%     setStatus(sprintf(['%d model(s) found, %d match the search ', ...
+%         'filter.'], numel(files), foundShown));
+% end
+% end
+
 function refreshModelList()
 folder = char(strtrim(modelsFolderEdit.Value));
 if ~isfolder(folder)
@@ -600,41 +650,58 @@ if isempty(files)
     return;
 end
 
-labels = cell(numel(files), 1);
-names = cell(numel(files), 1);
+% --- AUTOMATIC DEDUPLICATION (Keep First Occurrence) ---
+uniqueNames = {};
+uniqueLabels = {};
+seenMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
+skippedDups = {};
+
 for fileIndex = 1:numel(files)
     [~, modelName] = fileparts(files(fileIndex).name);
-    names{fileIndex} = modelName;
+    key = lower(modelName);
+    filePath = fullfile(files(fileIndex).folder, files(fileIndex).name);
     relativeFolder = relativePart(files(fileIndex).folder, folder);
-    if isempty(relativeFolder)
-        labels{fileIndex} = modelName;
+
+    if isKey(seenMap, key)
+        % Already seen this model name: skip duplicate, record for notice
+        skippedDups{end + 1} = sprintf('"%s" in "%s" (using: "%s")', ...
+            modelName, relativeFolder, seenMap(key)); %#ok<AGROW>
     else
-        labels{fileIndex} = sprintf('%s  (%s)', modelName, relativeFolder);
+        % First occurrence: keep it!
+        seenMap(key) = filePath;
+        uniqueNames{end + 1} = modelName; %#ok<AGROW>
+        if isempty(relativeFolder)
+            uniqueLabels{end + 1} = modelName; %#ok<AGROW>
+        else
+            uniqueLabels{end + 1} = sprintf('%s  (%s)', modelName, relativeFolder); %#ok<AGROW>
+        end
     end
 end
 
-state.AvailableNames = names;
-state.AvailableLabels = labels;
+state.AvailableNames = uniqueNames;
+state.AvailableLabels = uniqueLabels;
 updateAvailableLabels();
 
-duplicateNames = unique(names);
-if numel(duplicateNames) < numel(names)
-    logTo(log1, ['Warning: some model filenames appear more than once ', ...
-        'in different subfolders. Keep filenames unique - duplicates ', ...
-        'cannot be selected.']);
-end
-if isempty(strtrim(state.AvailableFilter))
-    setStatus(sprintf('%d model(s) found.', numel(files)));
-else
-    foundShown = numel(availableList.Items);
-    if foundShown == 1 && ...
-            strcmp(availableList.Items{1}, '(no matching models)')
-        foundShown = 0;
+% Print informational note if duplicates were filtered out
+if ~isempty(skippedDups)
+    logTo(log1, '--- DUPLICATE FILES RESOLUTION ---');
+    logTo(log1, sprintf('Detected %d duplicate file(s). Kept first occurrence for each:', numel(skippedDups)));
+    for d = 1:numel(skippedDups)
+        logTo(log1, ['  - Skipped duplicate: ' skippedDups{d}]);
     end
-    setStatus(sprintf(['%d model(s) found, %d match the search ', ...
-        'filter.'], numel(files), foundShown));
+    logTo(log1, '----------------------------------');
+    setStatus(sprintf('%d unique model(s) ready (%d duplicate(s) skipped).', ...
+        numel(uniqueNames), numel(skippedDups)));
+else
+    if isempty(strtrim(state.AvailableFilter))
+        setStatus(sprintf('%d model(s) found.', numel(uniqueNames)));
+    end
 end
 end
+
+
+
+
 
 function updateAvailableLabels()
 baseLabels = state.AvailableLabels;
