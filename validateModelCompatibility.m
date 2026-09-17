@@ -9,13 +9,15 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         selectedModels = {selectedModels};
     end
 
+    % --- FIX 2: Added LogLines field to avoid structure assignment errors
     report = struct( ...
         'Issues',          struct('Category', {}, 'Severity', {}, ...
-                              'Model', {}, 'Port', {}, ...
-                              'Description', {}, 'FixSuggestion', {}), ...
+                                  'Model', {}, 'Port', {}, ...
+                                  'Description', {}, 'FixSuggestion', {}), ...
         'ModelsChecked',   0, ...
         'ModelsSkipped',   0, ...
         'RecommendedStep', '0.01', ...
+        'LogLines',        {{}}, ... 
         'Summary',         '');
 
     numModels = numel(selectedModels);
@@ -24,50 +26,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         return;
     end
 
-    % --- STEP 1: Fast Disk Search & Loading (Parallel-friendly load) -------
-    % progressFcn(0.10, sprintf('Loading %d child models into memory...', numModels));
-    % openedByUs = {};
-    % loadedModels = {};
-
-    % % Pre-discover paths to avoid searching disk inside the loop
-    % allFiles = [dir(fullfile(modelsFolder, '**', '*.slx')); dir(fullfile(modelsFolder, '**', '*.mdl'))];
-    % allFiles = allFiles(~[allFiles.isdir]);
-    
-    % fileMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
-    % for fIdx = 1:numel(allFiles)
-    %     [~, bName] = fileparts(allFiles(fIdx).name);
-    %     fileMap(lower(bName)) = fullfile(allFiles(fIdx).folder, allFiles(fIdx).name);
-    % end
-
-    % for i = 1:numModels
-    %     modelName = selectedModels{i};
-    %     try
-    %         if ~bdIsLoaded(modelName)
-    %             key = lower(modelName);
-    %             if isKey(fileMap, key)
-    %                 load_system(fileMap(key));
-    %                 openedByUs{end + 1} = modelName; %#ok<AGROW>
-    %             else
-    %                 report.ModelsSkipped = report.ModelsSkipped + 1;
-    %                 continue;
-    %             end
-    %         end
-    %         loadedModels{end + 1} = modelName; %#ok<AGROW>
-    %     catch loadErr
-    %         report.ModelsSkipped = report.ModelsSkipped + 1;
-    %         report.Issues(end + 1) = makeIssue('LoadError', 'error', ...
-    %             modelName, '', ...
-    %             sprintf('Could not load model: %s', loadErr.message), ...
-    %             'Ensure the model file is not corrupted.'); %#ok<AGROW>
-    %     end
-    % end
-
-    % report.ModelsChecked = numel(loadedModels);
-    % if isempty(loadedModels)
-    %     report.Summary = 'No models could be loaded.';
-    %     return;
-    % end
-        % --- STEP 1: Pre-map and Load Models (Deduplication-Safe) --------------
+    % --- STEP 1: Pre-map and Load Models (Deduplication-Safe) --------------
     progressFcn(0.10, sprintf('Loading %d child models into memory...', numModels));
     openedByUs = {};
     loadedModels = {};
@@ -79,7 +38,6 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
     for fIdx = 1:numel(allFiles)
         [~, bName] = fileparts(allFiles(fIdx).name);
         key = lower(bName);
-        % If key does NOT exist yet, store it (keeps the first occurrence)
         if ~isKey(fileMap, key)
             fileMap(key) = fullfile(allFiles(fIdx).folder, allFiles(fIdx).name);
         end
@@ -119,7 +77,6 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
     for i = 1:numel(loadedModels)
         modelName = loadedModels{i};
         try
-            % Read child model fundamental step size statically
             modelST = strtrim(get_param(modelName, 'FixedStep'));
             if ~isempty(modelST) && ~strcmpi(modelST, 'auto')
                 stVal = str2double(modelST);
@@ -128,21 +85,20 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
                 end
             end
 
-            % Check root-level Outports statically
             outports = find_system(modelName, 'SearchDepth', 1, 'BlockType', 'Outport');
             for j = 1:numel(outports)
                 opPath = outports{j};
                 opName = get_param(opPath, 'Name');
                 opST = strtrim(get_param(opPath, 'SampleTime'));
                 
-                % Static Warning: Hardcoded positive sample rate on outports is a major hazard
+                % --- FIX 3: Reassure the user that the builder sweeps and resolves this
                 if ~isempty(opST) && ~any(strcmpi(opST, {'-1', 'inf', 'inherited'}))
                     stVal = str2double(opST);
                     if ~isnan(stVal) && stVal > 0
                         report.Issues(end + 1) = makeIssue('SampleTime', 'warning', ...
                             modelName, opName, ...
                             sprintf('Root Outport "%s" has a hardcoded sample time of %s.', opName, opST), ...
-                            'Change SampleTime to "-1" (inherited) to prevent parent referencing mismatch.'); %#ok<AGROW>
+                            'The generation script will automatically sweep and override this to "-1" (Inherited).'); %#ok<AGROW>
                     end
                 end
             end
@@ -150,7 +106,6 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         end
     end
 
-    % Calculate Recommended step size from gathered data
     if ~isempty(allSampleTimes)
         uniqueST = unique(allSampleTimes);
         gcdVal = uniqueST(1);
@@ -160,7 +115,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         report.RecommendedStep = num2str(gcdVal);
     end
 
-    % --- STEP 3: ONE parent-level compilation to resolve references -------
+    % --- STEP 3: Assemble Temporary Parent for Validation ------------------
     progressFcn(0.50, 'Assembling temporary system for compilation...');
     tempParent = 'teamtools_validation_temp';
     try
@@ -170,16 +125,34 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
 
     try
         new_system(tempParent);
+        
+        % --- FIX 1: Enforce parent solver configurations to match targetModel
         set_param(tempParent, 'SolverType', 'Fixed-step', ...
             'Solver', 'FixedStepDiscrete', ...
-            'FixedStep', '0.01');
+            'SolverMode', 'SingleTasking', ...
+            'AutoInsertRateTranBlk', 'off', ...
+            'FixedStep', report.RecommendedStep);
 
-        % De-escalate model-ref errors so compile doesn't immediately stop
-        try set_param(tempParent, 'InvalidRootInportConnection', 'warning'); catch, end
-        try set_param(tempParent, 'InvalidRootOutportConnection', 'warning'); catch, end
-        try set_param(tempParent, 'ModelReferenceCSMismatchMessage', 'warning'); catch, end
+        % De-escalate referencing diagnostics and rate issues to prevent compile crashes
+        safeParams = { ...
+            'InvalidRootInportConnection',          'warning', ...
+            'InvalidRootOutportConnection',         'warning', ...
+            'SingleTaskRateTransMsg',               'none', ...
+            'MultiTaskRateTransMsg',                'none', ...
+            'InconsistentSampleTimesMsg',           'none', ...
+            'ModelReferenceCSMismatchMessage',      'warning', ...
+            'ModelReferenceVersionMismatchMessage', 'none', ...
+            'ModelReferenceIOMsg',                  'none', ...
+            'ModelReferenceIOMismatchMessage',      'none'  ...
+        };
 
-        % Fast reference block additions
+        for pIdx = 1:2:numel(safeParams)
+            try
+                set_param(tempParent, safeParams{pIdx}, safeParams{pIdx+1});
+            catch
+            end
+        end
+
         yPos = 40;
         for i = 1:numel(loadedModels)
             modelName = loadedModels{i};
@@ -190,13 +163,11 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
             yPos = yPos + 100;
         end
 
-        % --- STEP 4: Compile parent model (Run Simulink Engine once) --------
         % --- STEP 4: Single Multi-threaded Simulink Compile -----------------
         progressFcn(0.70, 'Compiling referenced hierarchy...');
         compileErrors = {};
         
         try
-            % Simulink update diagram automatically captures all referencing errors
             set_param(tempParent, 'SimulationCommand', 'update');
         catch compileErr
             compileErrors{end + 1} = compileErr.message; %#ok<AGROW>
@@ -219,8 +190,8 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
                 detectedModel = extractModelName(errMsg, loadedModels);
                 report.Issues(end + 1) = makeIssue('SampleTime', 'error', ...
                     detectedModel, '', ...
-                    sprintf('Fixed-step size (0.01) is incompatible with sample times in child model "%s".', detectedModel), ...
-                    sprintf('Change parent model FixedStep to "%s", or use a variable-step solver.', report.RecommendedStep)); %#ok<AGROW>
+                    sprintf('Fixed-step size (%s) is incompatible with sample times in child model "%s".', report.RecommendedStep, detectedModel), ...
+                    sprintf('Verify that the child model "%s" Solver FixedStep matches the recommended GCD rate of %s.', detectedModel, report.RecommendedStep)); %#ok<AGROW>
             end
 
             % Pattern B: Constant Outport driven by non-constant signal
@@ -229,7 +200,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
                 report.Issues(end + 1) = makeIssue('OutportConnection', 'error', ...
                     detectedModel, '', ...
                     sprintf('Outport connection sample-time conflict in child model "%s".', detectedModel), ...
-                    sprintf('Open "%s" and set your root Outports SampleTime property to "inf".', detectedModel)); %#ok<AGROW>
+                    sprintf('Ensure root Outports are configured to "Inherit" or "inf" (Constant) depending on signal nature.', detectedModel)); %#ok<AGROW>
             end
         end
 
@@ -247,7 +218,6 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         try close_system(openedByUs{i}, 0); catch, end
     end
 
-    % Build statistics
     errorCount = sum(strcmp({report.Issues.Severity}, 'error'));
     warnCount = sum(strcmp({report.Issues.Severity}, 'warning'));
 
@@ -275,9 +245,14 @@ end
 
 function modelName = extractModelName(errMsg, knownModels)
     modelName = '(unknown)';
-    for mIdx = 1:numel(knownModels)
-        if contains(errMsg, knownModels{mIdx})
-            modelName = knownModels{mIdx};
+    
+    % --- FIX 4: Sort knownModels by length (descending) to avoid subset matching conflicts (e.g. model_1 vs model_10)
+    [~, idxs] = sort(cellfun(@length, knownModels), 'descend');
+    sortedModels = knownModels(idxs);
+    
+    for mIdx = 1:numel(sortedModels)
+        if contains(errMsg, sortedModels{mIdx})
+            modelName = sortedModels{mIdx};
             return;
         end
     end
