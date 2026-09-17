@@ -9,7 +9,6 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         selectedModels = {selectedModels};
     end
 
-    % --- FIX 2: Added LogLines field to avoid structure assignment errors
     report = struct( ...
         'Issues',          struct('Category', {}, 'Severity', {}, ...
                                   'Model', {}, 'Port', {}, ...
@@ -36,6 +35,11 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
     
     fileMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
     for fIdx = 1:numel(allFiles)
+        % Ignore slprj and hidden directories
+        if contains(allFiles(fIdx).folder, [filesep 'slprj']) || ...
+           contains(allFiles(fIdx).folder, [filesep '.'])
+            continue;
+        end
         [~, bName] = fileparts(allFiles(fIdx).name);
         key = lower(bName);
         if ~isKey(fileMap, key)
@@ -70,7 +74,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         return;
     end
 
-    % --- STEP 2: FAST STATIC CHECK (Milliseconds instead of Minutes) -------
+    % --- STEP 2: Fast Static Sample-Time Check ----------------------------
     progressFcn(0.30, 'Performing static sample-time checks...');
     allSampleTimes = [];
 
@@ -91,14 +95,13 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
                 opName = get_param(opPath, 'Name');
                 opST = strtrim(get_param(opPath, 'SampleTime'));
                 
-                % --- FIX 3: Reassure the user that the builder sweeps and resolves this
                 if ~isempty(opST) && ~any(strcmpi(opST, {'-1', 'inf', 'inherited'}))
                     stVal = str2double(opST);
                     if ~isnan(stVal) && stVal > 0
                         report.Issues(end + 1) = makeIssue('SampleTime', 'warning', ...
                             modelName, opName, ...
                             sprintf('Root Outport "%s" has a hardcoded sample time of %s.', opName, opST), ...
-                            'The generation script will automatically sweep and override this to "-1" (Inherited).'); %#ok<AGROW>
+                            'The generator will automatically override this to "-1" (Inherited).'); %#ok<AGROW>
                     end
                 end
             end
@@ -126,14 +129,12 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
     try
         new_system(tempParent);
         
-        % --- FIX 1: Enforce parent solver configurations to match targetModel
         set_param(tempParent, 'SolverType', 'Fixed-step', ...
             'Solver', 'FixedStepDiscrete', ...
             'SolverMode', 'SingleTasking', ...
             'AutoInsertRateTranBlk', 'off', ...
             'FixedStep', report.RecommendedStep);
 
-        % De-escalate referencing diagnostics and rate issues to prevent compile crashes
         safeParams = { ...
             'InvalidRootInportConnection',          'warning', ...
             'InvalidRootOutportConnection',         'warning', ...
@@ -147,10 +148,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
         };
 
         for pIdx = 1:2:numel(safeParams)
-            try
-                set_param(tempParent, safeParams{pIdx}, safeParams{pIdx+1});
-            catch
-            end
+            try, set_param(tempParent, safeParams{pIdx}, safeParams{pIdx+1}); catch, end
         end
 
         yPos = 40;
@@ -179,28 +177,26 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
             end
         end
 
-        % --- STEP 5: Fast parsing of compilation logs ---------------------
+        % --- STEP 5: Parse Compilation Results ----------------------------
         progressFcn(0.90, 'Analyzing compilation results...');
         for errIdx = 1:numel(compileErrors)
             errMsg = compileErrors{errIdx};
             errMsg = regexprep(errMsg, '<a[^>]*>\s*([^<]*?)\s*</a>', '$1');
 
-            % Pattern A: Solver / Fixed-Step incompatibility
             if contains(errMsg, 'fixed-step size') || contains(errMsg, 'integer multiple')
                 detectedModel = extractModelName(errMsg, loadedModels);
                 report.Issues(end + 1) = makeIssue('SampleTime', 'error', ...
                     detectedModel, '', ...
                     sprintf('Fixed-step size (%s) is incompatible with sample times in child model "%s".', report.RecommendedStep, detectedModel), ...
-                    sprintf('Verify that the child model "%s" Solver FixedStep matches the recommended GCD rate of %s.', detectedModel, report.RecommendedStep)); %#ok<AGROW>
+                    sprintf('Verify that child model "%s" FixedStep matches the recommended GCD rate of %s.', detectedModel, report.RecommendedStep)); %#ok<AGROW>
             end
 
-            % Pattern B: Constant Outport driven by non-constant signal
             if contains(errMsg, 'Invalid root Outport') || contains(errMsg, 'constant sample time')
                 detectedModel = extractModelName(errMsg, loadedModels);
                 report.Issues(end + 1) = makeIssue('OutportConnection', 'error', ...
                     detectedModel, '', ...
                     sprintf('Outport connection sample-time conflict in child model "%s".', detectedModel), ...
-                    sprintf('Ensure root Outports are configured to "Inherit" or "inf" (Constant) depending on signal nature.', detectedModel)); %#ok<AGROW>
+                    sprintf('Configure root Outports in "%s" to "Inherit" or "inf".', detectedModel)); %#ok<AGROW>
             end
         end
 
@@ -231,7 +227,7 @@ function report = validateModelCompatibility(modelsFolder, selectedModels, progr
 end
 
 %% ========================================================================
-%%  HELPERS
+%%  LOCAL HELPER FUNCTIONS (Declared ONCE only)
 %% ========================================================================
 function issue = makeIssue(category, severity, model, port, description, fix)
     issue = struct( ...
@@ -245,11 +241,8 @@ end
 
 function modelName = extractModelName(errMsg, knownModels)
     modelName = '(unknown)';
-    
-    % --- FIX 4: Sort knownModels by length (descending) to avoid subset matching conflicts (e.g. model_1 vs model_10)
     [~, idxs] = sort(cellfun(@length, knownModels), 'descend');
     sortedModels = knownModels(idxs);
-    
     for mIdx = 1:numel(sortedModels)
         if contains(errMsg, sortedModels{mIdx})
             modelName = sortedModels{mIdx};

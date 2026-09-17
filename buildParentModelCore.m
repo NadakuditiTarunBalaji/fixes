@@ -1113,19 +1113,65 @@ function [val, ok] = readConfigParamSafe(modelName, paramName)
     val = '';
 end
 
+% function available = discoverModelFiles(modelsFolder)
+% slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
+% mdlFiles = dir(fullfile(modelsFolder, '**', '*.mdl'));
+% files = [slxFiles; mdlFiles];
+% available.names = cell(numel(files), 1);
+% available.paths = cell(numel(files), 1);
+% for fileIndex = 1:numel(files)
+%     [~, discoveredName] = fileparts(files(fileIndex).name);
+%     available.names{fileIndex} = discoveredName;
+%     available.paths{fileIndex} = fullfile(files(fileIndex).folder, files(fileIndex).name);
+% end
+% end
 function available = discoverModelFiles(modelsFolder)
-slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
-mdlFiles = dir(fullfile(modelsFolder, '**', '*.mdl'));
-files = [slxFiles; mdlFiles];
-available.names = cell(numel(files), 1);
-available.paths = cell(numel(files), 1);
-for fileIndex = 1:numel(files)
-    [~, discoveredName] = fileparts(files(fileIndex).name);
-    available.names{fileIndex} = discoveredName;
-    available.paths{fileIndex} = fullfile(files(fileIndex).folder, files(fileIndex).name);
-end
-end
+% discoverModelFiles Finds all .slx and .mdl files, ignoring slprj/cache folders
+    slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
+    mdlFiles = dir(fullfile(modelsFolder, '**', '*.mdl'));
+    files = [slxFiles; mdlFiles];
+    files = files(~[files.isdir]);
+    
+    % Filter out slprj, hidden folders, and backup directories
+    keep = true(numel(files), 1);
+    for fIdx = 1:numel(files)
+        folderPath = files(fIdx).folder;
+        if contains(folderPath, [filesep 'slprj']) || ...
+           contains(folderPath, [filesep '.']) || ...
+           contains(folderPath, [filesep 'backup'])
+            keep(fIdx) = false;
+        end
+    end
+    files = files(keep);
 
+    % Deduplicate: if a model appears in root and a subfolder, prefer root
+    fileMap = containers.Map('KeyType', 'char', 'ValueType', 'char');
+    for fIdx = 1:numel(files)
+        [~, bName] = fileparts(files(fIdx).name);
+        key = lower(bName);
+        filePath = fullfile(files(fIdx).folder, files(fIdx).name);
+        
+        if ~isKey(fileMap, key)
+            fileMap(key) = filePath;
+        else
+            % If previous was in a subfolder but current is in root modelsFolder, override
+            if strcmpi(files(fIdx).folder, modelsFolder)
+                fileMap(key) = filePath;
+            end
+        end
+    end
+
+    allKeys = fileMap.keys();
+    available.names = cell(numel(allKeys), 1);
+    available.paths = cell(numel(allKeys), 1);
+    for kIdx = 1:numel(allKeys)
+        k = allKeys{kIdx};
+        p = fileMap(k);
+        [~, origName] = fileparts(p);
+        available.names{kIdx} = origName;
+        available.paths{kIdx} = p;
+    end
+end
 function [inputNames, outputNames] = getRootPortNames(modelName)
 inputBlocks = find_system(char(modelName), 'SearchDepth', 1, 'FollowLinks', 'on', 'LookUnderMasks', 'all', 'BlockType', 'Inport');
 outputBlocks = find_system(char(modelName), 'SearchDepth', 1, 'FollowLinks', 'on', 'LookUnderMasks', 'all', 'BlockType', 'Outport');
