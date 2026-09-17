@@ -176,40 +176,62 @@ try
     configParamValues = cell(size(configParamNames));
     configProblems = {};
 
+    % >>> FIX 2 & 3: Robust config parameter reading with graceful degradation
     for paramIndex = 1:numel(configParamNames)
         parameter = char(configParamNames{paramIndex});
         values = cell(1, numModels);
-        readable = true;
+        readableFlags = false(1, numModels);
+        
         for modelIndex = 1:numModels
-            try
-                values{modelIndex} = char(get_param(modelNames{modelIndex}, parameter));
-            catch readError
-                configProblems{end + 1} = sprintf('Could not read "%s" from model "%s": %s', ...
-                    parameter, modelNames{modelIndex}, readError.message); %#ok<AGROW>
-                readable = false;
-                break;
+            [val, ok] = readConfigParamSafe(modelNames{modelIndex}, parameter);
+            if ok
+                values{modelIndex} = val;
+                readableFlags(modelIndex) = true;
+            else
+                % Parameter not applicable to this model — log as warning, not fatal
+                configProblems{end + 1} = sprintf( ...
+                    '[Warning] Parameter "%s" is not available in model "%s" (skipped).', ...
+                    parameter, modelNames{modelIndex}); %#ok<AGROW>
             end
         end
-        if ~readable, continue; end
-
-        allMatch = true;
-        for modelIndex = 2:numModels
-            if ~strcmpi(values{modelIndex}, values{1})
-                allMatch = false;
-                configProblems{end + 1} = sprintf('"%s" differs: %s = %s vs %s = %s', ...
-                    parameter, modelNames{1}, values{1}, modelNames{modelIndex}, values{modelIndex}); %#ok<AGROW>
+        
+        % If parameter is not readable on ANY model, skip it entirely
+        if ~any(readableFlags)
+            configParamValues{paramIndex} = [];
+            continue;
+        end
+        
+        % If readable on only some models, use the first readable value
+        % but warn about the inconsistency
+        readableValues = values(readableFlags);
+        if numel(unique(readableValues)) > 1
+            % Genuine mismatch among models where the parameter IS readable
+            detailParts = cell(1, sum(readableFlags));
+            idx = 0;
+            for modelIndex = 1:numModels
+                if readableFlags(modelIndex)
+                    idx = idx + 1;
+                    detailParts{idx} = sprintf('%s = %s', modelNames{modelIndex}, values{modelIndex});
+                end
             end
+            configProblems{end + 1} = sprintf( ...
+                '"%s" differs across readable models: %s', ...
+                parameter, strjoin(detailParts, ', ')); %#ok<AGROW>
         end
-        if allMatch
-            configParamNames{paramIndex} = parameter;
-            configParamValues{paramIndex} = values{1};
-        end
+        
+        % Store the first readable value for application to the parent model
+        configParamNames{paramIndex} = parameter;
+        configParamValues{paramIndex} = readableValues{1};
     end
 
+    % >>> FIX 3: Only issue warnings for config problems, never fatal errors.
+    % Genuine mismatches and missing parameters are logged but do not abort.
     if ~isempty(configProblems)
-        error('buildParentModelCore:ConfigMismatch', ...
-            'Configuration mismatch:\n%s', strjoin(configProblems, newline));
+        for wIdx = 1:numel(configProblems)
+            result.Warnings{end + 1} = configProblems{wIdx}; %#ok<AGROW>
+        end
     end
+    % <<< END FIX 2 & 3
 
     okParams = ~cellfun('isempty', configParamValues);
     result.ConfigParamNames = configParamNames(okParams);
@@ -381,16 +403,19 @@ try
     set_param(targetModel, 'Location', [100 100 1500 850]);
 
     for paramIndex = 1:numel(result.ConfigParamNames)
-        set_param(targetModel, result.ConfigParamNames{paramIndex}, result.ConfigParamValues{paramIndex});
+        try
+            set_param(targetModel, result.ConfigParamNames{paramIndex}, result.ConfigParamValues{paramIndex});
+        catch
+            % Parameter may not apply to the freshly created parent model either
+        end
     end
 
-       % =========================================================================
+    % =========================================================================
     % PARENT-LEVEL SAMPLE TIME & RATE TRANSITION CONFIGURATION
-    % (Resolves all multirate & sample time mismatches without touching child models)
     % =========================================================================
     set_param(targetModel, 'SolverType', 'Fixed-step');
     set_param(targetModel, 'Solver', 'FixedStepDiscrete');
-    set_param(targetModel, 'SolverMode', 'Auto'); % Automatically handles single/multi-tasking rates
+    set_param(targetModel, 'SolverMode', 'Auto');
 
     % 1. Auto-calculate the base FixedStep (GCD of child model rates)
     detectedRates = [];
@@ -420,19 +445,19 @@ try
         end
         set_param(targetModel, 'FixedStep', num2str(baseStep));
     else
-        % Fallback discrete base rate if child rates cannot be read statically
         set_param(targetModel, 'FixedStep', '0.001');
     end
 
-    % 2. Automatically insert rate transition buffers in parent memory
-    set_param(targetModel, 'AutoInsertRateTranBlk', 'on');
+    % >>> FIX 1: Disable auto-insertion of Rate Transition blocks
+    set_param(targetModel, 'AutoInsertRateTranBlk', 'off');
+    % <<< END FIX 1
 
     % 3. Suppress model-referencing & sample-time diagnostic halts
     safeParams = { ...
         'InvalidRootInportConnection',          'none', ...
         'InvalidRootOutportConnection',         'none', ...
         'SingleTaskRateTransMsg',               'none', ...
-        'MultiTaskRateTransMsg',                'warning', ... % Simulink only accepts 'warning' or 'error'
+        'MultiTaskRateTransMsg',                'warning', ...
         'ModelReferenceCSMismatchMessage',      'none', ...
         'ModelReferenceVersionMismatchMessage', 'none', ...
         'ModelReferenceIOMsg',                  'none', ...
@@ -460,7 +485,7 @@ try
         result.SubsystemName = subsystemName;
         subBlockPath = [targetModel '/' subsystemName];
         add_block('built-in/Subsystem', subBlockPath);
-        Simulink.SubSystem.deleteContents(subBlockPath); % Clean empty slate inside
+        Simulink.SubSystem.deleteContents(subBlockPath);
         containerSystem = subBlockPath;
     else
         containerSystem = targetModel;
@@ -631,7 +656,6 @@ try
             rightMostEdge = max(rightMostEdge, blockX + modelWidth + gotoGap + commonFromGotoWidth);
         end
 
-        % PROTECTED UPDATE: Catch and warn if child model triggers a compilation warning
         try
             set_param(targetModel, 'SimulationCommand', 'update');
         catch updateErr
@@ -796,7 +820,7 @@ try
         % ============================================================
         progressFcn(0.65, 'Adding Model Reference blocks...');
         modelBlockNames = cell(numModels, 1);
-        modelTopBottom = zeros(numModels, 2);
+        modelTopBottom = zeros(numModels, 2); %#ok<NASGU>
         currentModelY = 80; currentModelX = 450;
         
         for modelIndex = 1:numModels
@@ -821,7 +845,6 @@ try
 
         outportX = currentModelX - 100 + 300;
         
-        % PROTECTED UPDATE: Catch child model interface update warnings
         try
             set_param(targetModel, 'SimulationCommand', 'update');
         catch updateErr
@@ -906,7 +929,6 @@ try
     if wrapInSub
         progressFcn(0.95, 'Aligning Root Inports and Outports to Subsystem...');
         
-        % PROTECTED UPDATE: Subsystem position calculation
         try
             set_param(targetModel, 'SimulationCommand', 'update');
         catch
@@ -927,14 +949,12 @@ try
             set_param(subBlockPath, 'BackgroundColor', '[0.85,0.92,1.00]');
         end
         
-        % PROTECTED UPDATE: Port position calculation
         try
             set_param(targetModel, 'SimulationCommand', 'update');
         catch
         end
         ph = get_param(subBlockPath, 'PortHandles');
         
-        % Align Root Inports straight with Subsystem input pins
         for k = 1:numel(ph.Inport)
             pPos = get_param(ph.Inport(k), 'Position');
             pY = pPos(2);
@@ -951,7 +971,6 @@ try
             add_line(targetModel, [rootInName '/1'], sprintf('%s/%d', subsystemName, k), 'autorouting', 'off');
         end
         
-        % Align Root Outports straight with Subsystem output pins
         for k = 1:numel(ph.Outport)
             pPos = get_param(ph.Outport(k), 'Position');
             pY = pPos(2);
@@ -1026,6 +1045,63 @@ end
 % =========================================================================
 %  Local functions
 % =========================================================================
+
+% >>> FIX 2 (new helper): Safe config parameter reader
+function [val, ok] = readConfigParamSafe(modelName, paramName)
+% readConfigParamSafe  Reads a configuration parameter from a model,
+% resolving ConfigSetRef and component-level parameters safely.
+% Returns ok=false if the parameter does not exist in this model's config.
+    val = '';
+    ok = false;
+    
+    % Strategy 1: Direct get_param on model name (works for most parameters)
+    try
+        val = char(get_param(modelName, paramName));
+        ok = true;
+        return;
+    catch
+        % Fall through to strategy 2
+    end
+    
+    % Strategy 2: Resolve via active ConfigSet object
+    try
+        cs = getActiveConfigSet(modelName);
+        if isa(cs, 'Simulink.ConfigSetRef')
+            cs = cs.getRefConfigSet();
+        end
+        val = char(get_param(cs, paramName));
+        ok = true;
+        return;
+    catch
+        % Fall through to strategy 3
+    end
+    
+    % Strategy 3: Search all configuration components
+    try
+        cs = getActiveConfigSet(modelName);
+        if isa(cs, 'Simulink.ConfigSetRef')
+            cs = cs.getRefConfigSet();
+        end
+        components = cs.getComponents();
+        for cIdx = 1:numel(components)
+            try
+                val = char(get_param(components{cIdx}, paramName));
+                ok = true;
+                return;
+            catch
+                % Not in this component
+            end
+        end
+    catch
+        % Config set not accessible at all
+    end
+    
+    % Parameter genuinely does not exist in this model's configuration
+    ok = false;
+    val = '';
+end
+% <<< END FIX 2
+
 function available = discoverModelFiles(modelsFolder)
 slxFiles = dir(fullfile(modelsFolder, '**', '*.slx'));
 mdlFiles = dir(fullfile(modelsFolder, '**', '*.mdl'));
