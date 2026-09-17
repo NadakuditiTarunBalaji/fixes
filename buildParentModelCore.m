@@ -19,6 +19,7 @@ options = fillDefaults(options, struct( ...
     'Layout',                'vertical', ...
     'ColorBlocks',           false, ...
     'AutoDelayFeedback',     false, ...
+    'AllowMultipleInstances',       true, ...   % <<< NEW: Allows same model to be referenced multiple times
     'BlockSpacing',          100, ...
     'FromModelGap',          [], ...
     'ModelGotoGap',          [], ...
@@ -146,6 +147,25 @@ for modelIndex = 1:numModels
 end
 
 % ------------------------------------------------------------ Load Models
+% progressFcn(0.15, 'Loading referenced models...');
+% searchPath = genpath(modelsFolder);
+% if ~isempty(searchPath), addpath(searchPath); end
+
+% loadedByUs = {};
+% try
+%     for modelIndex = 1:numModels
+%         if ~bdIsLoaded(modelNames{modelIndex})
+%             load_system(modelPaths{modelIndex});
+%             loadedByUs{end + 1} = modelNames{modelIndex}; %#ok<AGROW>
+%         end
+%     end
+% catch loadError
+%     closeLoadedModels(loadedByUs);
+%     error('buildParentModelCore:ModelLoadFailed', ...
+%         'Could not load model %s.\n\nDetails:\n%s', modelPaths{modelIndex}, errorChainText(loadError));
+% end
+
+% ------------------------------------------------------------ Load Models
 progressFcn(0.15, 'Loading referenced models...');
 searchPath = genpath(modelsFolder);
 if ~isempty(searchPath), addpath(searchPath); end
@@ -157,6 +177,15 @@ try
             load_system(modelPaths{modelIndex});
             loadedByUs{end + 1} = modelNames{modelIndex}; %#ok<AGROW>
         end
+        
+        % >>> Enable multiple instances for referenced models
+        if options.AllowMultipleInstances
+            try
+                set_param(modelNames{modelIndex}, 'ModelReferenceNumInstancesAllowed', 'Multi');
+            catch
+            end
+        end
+        % <<<
     end
 catch loadError
     closeLoadedModels(loadedByUs);
@@ -1038,6 +1067,11 @@ function forceInheritedSampleTime(sys)
         catch
         end
     end
+    % Sweep UnitDelays
+    % allDelays = find_system(sys, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'UnitDelay');
+    % for idx = 1:numel(allDelays)
+    %     try, set_param(allDelays{idx}, 'SampleTime', '-1'); catch, end
+    % end
 end
 
 function [val, ok] = readConfigParamSafe(modelName, paramName)
