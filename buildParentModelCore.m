@@ -930,17 +930,21 @@ try
         end
     end
 
-    % ------------------------------------------------ Force SampleTime = -1 on All Ports
-    progressFcn(0.97, 'Enforcing inherited sample times on all ports...');
+    % =========================================================================
+    % GLOBAL SWEEP: Enforce Inherited Sample Time (-1) on All Levels of Ports
+    % =========================================================================
+    progressFcn(0.97, 'Enforcing inherited sample times (-1) on all levels of ports...');
     
-    allInports = find_system(targetModel, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Inport');
-    for idx = 1:numel(allInports)
-        try, set_param(allInports{idx}, 'SampleTime', '-1'); catch, end
-    end
+    % Sweep parent model (including wrapper subsystems)
+    forceInheritedSampleTime(targetModel);
     
-    allOutports = find_system(targetModel, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Outport');
-    for idx = 1:numel(allOutports)
-        try, set_param(allOutports{idx}, 'SampleTime', '-1'); catch, end
+    % Sweep and automatically save child models
+    for mIdx = 1:numModels
+        mdlName = modelNames{mIdx};
+        forceInheritedSampleTime(mdlName);
+        if bdIsDirty(mdlName)
+            save_system(mdlName);
+        end
     end
 
     progressFcn(0.98, 'Updating diagram...');
@@ -1000,6 +1004,41 @@ end
 % =========================================================================
 %  Local functions
 % =========================================================================
+function forceInheritedSampleTime(sys)
+% forceInheritedSampleTime Recursively overrides all Inports & Outports to -1
+    if ~bdIsLoaded(sys)
+        load_system(sys);
+    end
+    
+    % Unlock model if it's locked (e.g. library block)
+    isLocked = strcmp(get_param(sys, 'Lock'), 'on');
+    if isLocked
+        set_param(sys, 'Lock', 'off');
+    end
+    
+    % Sweep Inports
+    allInports = find_system(sys, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Inport');
+    for idx = 1:numel(allInports)
+        try
+            if ~strcmp(get_param(allInports{idx}, 'SampleTime'), '-1')
+                set_param(allInports{idx}, 'SampleTime', '-1');
+            end
+        catch
+        end
+    end
+    
+    % Sweep Outports
+    allOutports = find_system(sys, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Outport');
+    for idx = 1:numel(allOutports)
+        try
+            if ~strcmp(get_param(allOutports{idx}, 'SampleTime'), '-1')
+                set_param(allOutports{idx}, 'SampleTime', '-1');
+            end
+        catch
+        end
+    end
+end
+
 function [val, ok] = readConfigParamSafe(modelName, paramName)
     val = '';
     ok = false;
