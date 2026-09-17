@@ -188,15 +188,12 @@ try
                 readableFlags(modelIndex) = true;
             else
                 configProblems{end + 1} = sprintf( ...
-                    '[Warning] Parameter "%s" is not available in model "%s" (skipped).', ...
+                    'Parameter "%s" not available in model "%s" (skipped).', ...
                     parameter, modelNames{modelIndex}); %#ok<AGROW>
             end
         end
         
-        if ~any(readableFlags)
-            configParamValues{paramIndex} = [];
-            continue;
-        end
+        if ~any(readableFlags), continue; end
         
         readableValues = values(readableFlags);
         if numel(unique(readableValues)) > 1
@@ -209,7 +206,7 @@ try
                 end
             end
             configProblems{end + 1} = sprintf( ...
-                '"%s" differs across readable models: %s', ...
+                '"%s" differs across models: %s', ...
                 parameter, strjoin(detailParts, ', ')); %#ok<AGROW>
         end
         
@@ -237,13 +234,7 @@ try
         modelInfo(modelIndex).InputNames = inputNames;
         modelInfo(modelIndex).OutputNames = outputNames;
     end
-
-    result.Models = struct('Name', modelNames, 'Path', modelPaths, ...
-        'InputNames', cell(numModels, 1), 'OutputNames', cell(numModels, 1));
-    for modelIndex = 1:numModels
-        result.Models(modelIndex).InputNames = modelInfo(modelIndex).InputNames;
-        result.Models(modelIndex).OutputNames = modelInfo(modelIndex).OutputNames;
-    end
+    result.Models = modelInfo;
 
     % ---------------------------------------------------------------- Plan
     progressFcn(0.5, 'Planning connections...');
@@ -400,44 +391,17 @@ try
     end
 
     % =========================================================================
-    % PARENT-LEVEL SAMPLE TIME & RATE TRANSITION CONFIGURATION
+    % PARENT-LEVEL SAMPLE TIME CONFIGURATION
     % =========================================================================
     set_param(targetModel, 'SolverType', 'Fixed-step');
     set_param(targetModel, 'Solver', 'FixedStepDiscrete');
-
-    childSolverModes = {};
-    for mIdx = 1:numel(modelNames)
-        try
-            childSolverModes{end+1} = get_param(modelNames{mIdx}, 'SolverMode'); %#ok<AGROW>
-        catch
-            childSolverModes{end+1} = 'Auto'; %#ok<AGROW>
-        end
-    end
-    
-    if any(strcmpi(childSolverModes, 'MultiTasking'))
-        parentSolverMode = 'MultiTasking';
-        for mIdx = 1:numel(modelNames)
-            try
-                set_param(modelNames{mIdx}, 'SolverMode', 'MultiTasking');
-            catch
-            end
-        end
-    else
-        parentSolverMode = 'SingleTasking';
-    end
-    set_param(targetModel, 'SolverMode', parentSolverMode);
+    set_param(targetModel, 'SolverMode', 'SingleTasking');
+    set_param(targetModel, 'AutoInsertRateTranBlk', 'off');
 
     detectedRates = [];
-    if isfield(result, 'Models') && ~isempty(result.Models)
-        modelListToCheck = {result.Models.Name};
-    else
-        modelListToCheck = {};
-    end
-
-    for mIdx = 1:numel(modelListToCheck)
-        childName = modelListToCheck{mIdx};
+    for mIdx = 1:numModels
         try
-            childStep = str2double(get_param(childName, 'FixedStep'));
+            childStep = str2double(get_param(modelNames{mIdx}, 'FixedStep'));
             if ~isnan(childStep) && childStep > 0
                 detectedRates(end+1) = childStep; %#ok<AGROW>
             end
@@ -455,9 +419,7 @@ try
         set_param(targetModel, 'FixedStep', '0.001');
     end
 
-    set_param(targetModel, 'AutoInsertRateTranBlk', 'off');
-
-    % Suppression parameters to compile silently without transition blocks
+    % Suppress all diagnostic halts & warnings
     safeParams = { ...
         'InvalidRootInportConnection',          'none', ...
         'InvalidRootOutportConnection',         'none', ...
@@ -662,13 +624,6 @@ try
             rightMostEdge = max(rightMostEdge, blockX + modelWidth + gotoGap + commonFromGotoWidth);
         end
 
-        try
-            set_param(targetModel, 'SimulationCommand', 'update');
-        catch updateErr
-            result.Warnings{end + 1} = sprintf('Child model interface update warning: %s', ...
-                errorChainText(updateErr));
-        end
-
         progressFcn(0.75, 'Reading the model ports...');
         for modelIndex = 1:numModels
             portHandles = get_param([containerSystem '/' modelBlockNames{modelIndex}], 'PortHandles');
@@ -759,7 +714,7 @@ try
                 if colorBlocks
                     set_param([containerSystem '/' gotoName], 'BackgroundColor', paletteColor(modelIndex));
                 end
-                add_line(sprintf('%s/%d', modelBlockNames{modelIndex}, outputIndex), [gotoName '/1'], 'autorouting', 'off');
+                add_line(containerSystem, sprintf('%s/%d', modelBlockNames{modelIndex}, outputIndex), [gotoName '/1'], 'autorouting', 'off');
             end
         end
 
@@ -826,7 +781,6 @@ try
         % ============================================================
         progressFcn(0.65, 'Adding Model Reference blocks...');
         modelBlockNames = cell(numModels, 1);
-        modelTopBottom = zeros(numModels, 2); %#ok<NASGU>
         currentModelY = 80; currentModelX = 450;
         
         for modelIndex = 1:numModels
@@ -846,17 +800,9 @@ try
             add_block('simulink/Ports & Subsystems/Model', [containerSystem '/' blockName], ...
                 'ModelName', modelInfo(modelIndex).Name, 'Position', bPos);
             if colorBlocks, set_param([containerSystem '/' blockName], 'BackgroundColor', paletteColor(modelIndex)); end
-            modelTopBottom(modelIndex, :) = [bPos(2), bPos(4)];
         end
 
         outportX = currentModelX - 100 + 300;
-        
-        try
-            set_param(targetModel, 'SimulationCommand', 'update');
-        catch updateErr
-            result.Warnings{end + 1} = sprintf('Child model interface update warning: %s', ...
-                errorChainText(updateErr));
-        end
 
         for modelIndex = 1:numModels
             pH = get_param([containerSystem '/' modelBlockNames{modelIndex}], 'PortHandles');
@@ -935,11 +881,6 @@ try
     if wrapInSub
         progressFcn(0.95, 'Aligning Root Inports and Outports to Subsystem...');
         
-        try
-            set_param(targetModel, 'SimulationCommand', 'update');
-        catch
-        end
-        
         subBlockPath = [targetModel '/' subsystemName];
         ph = get_param(subBlockPath, 'PortHandles');
         nSubIn = numel(ph.Inport);
@@ -955,17 +896,11 @@ try
             set_param(subBlockPath, 'BackgroundColor', '[0.85,0.92,1.00]');
         end
         
-        try
-            set_param(targetModel, 'SimulationCommand', 'update');
-        catch
-        end
         ph = get_param(subBlockPath, 'PortHandles');
         
         for k = 1:numel(ph.Inport)
             pPos = get_param(ph.Inport(k), 'Position');
             pY = pPos(2);
-            inName = '';
-            
             if strcmp(connectionMethod, 'fromgoto')
                 inName = tagOf(globalInputKeyList{k});
             else
@@ -982,7 +917,6 @@ try
         for k = 1:numel(ph.Outport)
             pPos = get_param(ph.Outport(k), 'Position');
             pY = pPos(2);
-            outName = '';
             if strcmp(connectionMethod, 'fromgoto')
                 outName = result.RootOutputs(k).Name;
             else
@@ -996,27 +930,18 @@ try
         end
     end
 
-    % =========================================================================
-    % >>> FIX: GLOBAL SWEEP - Force every Inport and Outport to -1
-    % =========================================================================
+    % ------------------------------------------------ Force SampleTime = -1 on All Ports
     progressFcn(0.97, 'Enforcing inherited sample times on all ports...');
     
     allInports = find_system(targetModel, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Inport');
     for idx = 1:numel(allInports)
-        try
-            set_param(allInports{idx}, 'SampleTime', '-1');
-        catch
-        end
+        try, set_param(allInports{idx}, 'SampleTime', '-1'); catch, end
     end
     
     allOutports = find_system(targetModel, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Outport');
     for idx = 1:numel(allOutports)
-        try
-            set_param(allOutports{idx}, 'SampleTime', '-1');
-        catch
-        end
+        try, set_param(allOutports{idx}, 'SampleTime', '-1'); catch, end
     end
-    % <<< END GLOBAL SWEEP
 
     progressFcn(0.98, 'Updating diagram...');
     try 
