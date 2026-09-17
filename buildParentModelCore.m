@@ -457,13 +457,13 @@ try
 
     set_param(targetModel, 'AutoInsertRateTranBlk', 'off');
 
-    % Diagnostic suppressions
+    % Suppression parameters to compile silently without transition blocks
     safeParams = { ...
         'InvalidRootInportConnection',          'none', ...
         'InvalidRootOutportConnection',         'none', ...
         'SingleTaskRateTransMsg',               'none', ...
         'MultiTaskRateTransMsg',                'none', ...
-        'InconsistentSampleTimesMsg',           'none', ... % >>> Safety diagnostic suppression
+        'InconsistentSampleTimesMsg',           'none', ...
         'ModelReferenceCSMismatchMessage',      'none', ...
         'ModelReferenceVersionMismatchMessage', 'none', ...
         'ModelReferenceIOMsg',                  'none', ...
@@ -759,7 +759,7 @@ try
                 if colorBlocks
                     set_param([containerSystem '/' gotoName], 'BackgroundColor', paletteColor(modelIndex));
                 end
-                add_line(containerSystem, sprintf('%s/%d', modelBlockNames{modelIndex}, outputIndex), [gotoName '/1'], 'autorouting', 'off');
+                add_line(sprintf('%s/%d', modelBlockNames{modelIndex}, outputIndex), [gotoName '/1'], 'autorouting', 'off');
             end
         end
 
@@ -776,19 +776,6 @@ try
             add_block('simulink/Sources/In1', [containerSystem '/' inBlockName], 'Port', num2str(g), ...
                 'Position', [50, signalY - 10, 85, signalY + 10]);
             if colorBlocks, set_param([containerSystem '/' inBlockName], 'BackgroundColor', globalInportColor); end
-            
-            % >>> FIX: Inherit child model's expected SampleTime explicitly
-            ts = '-1';
-            for rIdx = 1:numel(rootInputs)
-                if strcmp(normKey(rootInputs(rIdx).Name, caseInsensitive), key)
-                    destModelName = rootInputs(rIdx).DestinationModels{1};
-                    destPortName = rootInputs(rIdx).DestinationPorts{1};
-                    ts = getChildInportSampleTime(destModelName, destPortName);
-                    break;
-                end
-            end
-            set_param([containerSystem '/' inBlockName], 'SampleTime', ts);
-            % <<<
             
             gotoBlockName = makeUniqueBlockName(containerSystem, ['Goto_' tag]);
             globalGotoLeft = 85 + blockSpacing;
@@ -915,13 +902,6 @@ try
                     'Position', [50, iY - 10, 85, iY + 10]);
                 if colorBlocks, set_param([containerSystem '/' iName], 'BackgroundColor', globalInportColor); end
                 
-                % >>> FIX: Inherit expected SampleTime in direct lines mode
-                destModelName = rootInputs(pos).DestinationModels{1};
-                destPortName = rootInputs(pos).DestinationPorts{1};
-                ts = getChildInportSampleTime(destModelName, destPortName);
-                set_param([containerSystem '/' iName], 'SampleTime', ts);
-                % <<<
-                
                 rH = get_param([containerSystem '/' iName], 'PortHandles'); rH = rH.Outport;
                 for d = 1:numel(rootInputs(pos).DestinationModelIndexes)
                     mIdx = rootInputs(pos).DestinationModelIndexes(d);
@@ -985,36 +965,17 @@ try
             pPos = get_param(ph.Inport(k), 'Position');
             pY = pPos(2);
             inName = '';
-            ts = '-1';
             
-            % >>> FIX: Find and apply correct sample time in Subsystem wrapping mode
             if strcmp(connectionMethod, 'fromgoto')
                 inName = tagOf(globalInputKeyList{k});
-                key = globalInputKeyList{k};
-                for rIdx = 1:numel(rootInputs)
-                    if strcmp(normKey(rootInputs(rIdx).Name, caseInsensitive), key)
-                        destModelName = rootInputs(rIdx).DestinationModels{1};
-                        destPortName = rootInputs(rIdx).DestinationPorts{1};
-                        ts = getChildInportSampleTime(destModelName, destPortName);
-                        break;
-                    end
-                end
             else
                 inName = rootInputs(k).Name;
-                destModelName = rootInputs(k).DestinationModels{1};
-                destPortName = rootInputs(k).DestinationPorts{1};
-                ts = getChildInportSampleTime(destModelName, destPortName);
             end
-            % <<<
             
             rootInName = makeUniqueBlockName(targetModel, inName);
             add_block('simulink/Sources/In1', [targetModel '/' rootInName], 'Port', num2str(k), ...
                 'Position', [subX - 180, pY - 10, subX - 145, pY + 10]);
             if colorBlocks, set_param([targetModel '/' rootInName], 'BackgroundColor', globalInportColor); end
-            
-            % Set top-level Inport sample time
-            set_param([targetModel '/' rootInName], 'SampleTime', ts);
-            
             add_line(targetModel, [rootInName '/1'], sprintf('%s/%d', subsystemName, k), 'autorouting', 'off');
         end
         
@@ -1034,6 +995,28 @@ try
             add_line(targetModel, sprintf('%s/%d', subsystemName, k), [rootOutName '/1'], 'autorouting', 'off');
         end
     end
+
+    % =========================================================================
+    % >>> FIX: GLOBAL SWEEP - Force every Inport and Outport to -1
+    % =========================================================================
+    progressFcn(0.97, 'Enforcing inherited sample times on all ports...');
+    
+    allInports = find_system(targetModel, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Inport');
+    for idx = 1:numel(allInports)
+        try
+            set_param(allInports{idx}, 'SampleTime', '-1');
+        catch
+        end
+    end
+    
+    allOutports = find_system(targetModel, 'MatchFilter', @Simulink.match.allVariants, 'BlockType', 'Outport');
+    for idx = 1:numel(allOutports)
+        try
+            set_param(allOutports{idx}, 'SampleTime', '-1');
+        catch
+        end
+    end
+    % <<< END GLOBAL SWEEP
 
     progressFcn(0.98, 'Updating diagram...');
     try 
@@ -1092,23 +1075,6 @@ end
 % =========================================================================
 %  Local functions
 % =========================================================================
-
-% >>> FIX: Helper function to query child model port sample times
-function ts = getChildInportSampleTime(childModel, portName)
-% getChildInportSampleTime Retrieves expected sample time from referenced model
-    ts = '-1'; % Fallback to Inherited if unable to resolve
-    try
-        inBlock = find_system(childModel, 'SearchDepth', 1, ...
-            'FollowLinks', 'on', 'LookUnderMasks', 'all', ...
-            'BlockType', 'Inport', 'Name', portName);
-        if ~isempty(inBlock)
-            ts = get_param(inBlock{1}, 'SampleTime');
-        end
-    catch
-    end
-end
-% <<<
-
 function [val, ok] = readConfigParamSafe(modelName, paramName)
     val = '';
     ok = false;
