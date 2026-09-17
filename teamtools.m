@@ -1,13 +1,15 @@
 function teamtools
-%TEAMTOOLS Simulink team tools in one simple app.
+%%TEAMTOOLS Simulink team tools in one simple app.
 %
 %   teamtools
 %
-% Opens a single window with two tabs:
+% Opens a single window with three tabs:
 %   1. Build Parent Model  - generate a parent model from referenced
 %      models (unified preview & compatibility validation), with an
-%      Excel model importer, search filter, and an optional loop breaker.
-%   2. Extract Attributes  - collect attribute records from .m files
+%      Excel model importer, search filter.
+%   2. Unit Delays         - list model-to-model connections and programmatically
+%      insert Unit Delays to resolve algebraic loops.
+%   3. Extract Attributes  - collect attribute records from .m files
 %      using a selected subsystem's port names as search tags.
 %
 % All heavy lifting is done by shared engines (buildParentModelCore.m,
@@ -97,13 +99,14 @@ tabs.Layout.Row = 2;
 tabs.Layout.Column = 1;
 
 tab1 = uitab(tabs, 'Title', 'Build Parent Model');
+tab3 = uitab(tabs, 'Title', 'Unit Delays'); % <<< NEW: Dedicated Unit Delay Tab
 tab2 = uitab(tabs, 'Title', 'Extract Attributes');
 
 % =========================================================================
-%  TAB 1 - BUILD PARENT MODEL
+%  TAB 1 - BUILD PARENT MODEL (12 Rows)
 % =========================================================================
-g1 = uigridlayout(tab1, [17 6]);
-g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 24, 26, 24, 48, 20, 36, 24, 24, 36, 24, '1x'};
+g1 = uigridlayout(tab1, [12 6]);
+g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 26, 24, 48, 24, 24, '1x'};
 g1.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
 g1.Padding = [14 10 14 10];
 g1.RowSpacing = 6;
@@ -230,30 +233,15 @@ browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
 browseSaveBtn.Layout.Row = 5;
 browseSaveBtn.Layout.Column = 6;
 
-chkCase = uicheckbox(g1, ...
-    'Text', 'Match port names case-insensitively', 'Value', true);
-chkCase.Layout.Row = 6;
-chkCase.Layout.Column = [1 3];
-
-chkBackup = uicheckbox(g1, ...
-    'Text', 'Backup existing model (.bak)', 'Value', true);
-chkBackup.Layout.Row = 6;
-chkBackup.Layout.Column = [4 6];
-
-chkClose = uicheckbox(g1, ...
-    'Text', 'Close referenced models when done', 'Value', true);
-chkClose.Layout.Row = 7;
-chkClose.Layout.Column = [1 3];
-
 chkWrap = uicheckbox(g1, ...
     'Text', 'Create main subsystem (wrap all contents)', 'Value', true);
 safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
     'placed inside one main subsystem of the parent model.']);
-chkWrap.Layout.Row = 7;
-chkWrap.Layout.Column = [4 6];
+chkWrap.Layout.Row = 6;
+chkWrap.Layout.Column = [1 6];
 
 lblConnMethod = uilabel(g1, 'Text', 'Connect via:');
-lblConnMethod.Layout.Row = 8;
+lblConnMethod.Layout.Row = 7;
 lblConnMethod.Layout.Column = 1;
 
 connMethodDrop = uidropdown(g1, ...
@@ -262,28 +250,28 @@ connMethodDrop = uidropdown(g1, ...
 safeTooltip(connMethodDrop, ['From/Goto blocks: signals travel through ', ...
     'Goto/From tags - no crossing lines. Direct lines: physical lines ', ...
     'from each output to every matching input.']);
-connMethodDrop.Layout.Row = 8;
+connMethodDrop.Layout.Row = 7;
 connMethodDrop.Layout.Column = [2 3];
 
 lblArrange = uilabel(g1, 'Text', 'Arrangement:');
-lblArrange.Layout.Row = 8;
+lblArrange.Layout.Row = 7;
 lblArrange.Layout.Column = 4;
 
 layoutDrop = uidropdown(g1, ...
     'Items', {'Horizontal (side by side)', 'Vertical (stacked)'}, ...
     'Value', 'Horizontal (side by side)');
-layoutDrop.Layout.Row = 8;
+layoutDrop.Layout.Row = 7;
 layoutDrop.Layout.Column = [5 6];
 
 chkColor = uicheckbox(g1, 'Text', 'Color blocks by model', 'Value', true);
-chkColor.Layout.Row = 9;
+chkColor.Layout.Row = 8;
 chkColor.Layout.Column = [1 3];
 
 chkAutoDelay = uicheckbox(g1, ...
     'Text', 'Auto Unit Delay on feedback signals', 'Value', true);
 safeTooltip(chkAutoDelay, ['Feedback signals get a Unit Delay at that ', ...
     'model''s INPUT, which prevents algebraic loops.']);
-chkAutoDelay.Layout.Row = 9;
+chkAutoDelay.Layout.Row = 8;
 chkAutoDelay.Layout.Column = [4 6];
 
 previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
@@ -291,59 +279,18 @@ previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
     'ButtonPushedFcn', @doPreview);
 safeTooltip(previewBtn, ['Validates sample-time & model referencing compatibility ', ...
     'and displays the full connection plan. Must be run before Generate.']);
-previewBtn.Layout.Row = 10;
+previewBtn.Layout.Row = 9;
 previewBtn.Layout.Column = [2 3];
 
 generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
     'FontSize', 12, ...
     'FontWeight', 'bold', 'Enable', 'off', 'ButtonPushedFcn', @doGenerate);
-generateBtn.Layout.Row = 10;
+generateBtn.Layout.Row = 9;
 generateBtn.Layout.Column = [4 5];
-
-lblLoop = uilabel(g1, 'Text', ...
-    ['Loop breaker - use when Simulink reports an algebraic loop:  ' ...
-    '1) model name  2) Refresh list  3) pick connection  ' ...
-    '4) Insert Unit Delay'], ...
-    'FontWeight', 'bold');
-lblLoop.Layout.Row = 11;
-lblLoop.Layout.Column = [1 6];
-
-connModelEdit = uieditfield(g1, 'text', ...
-    'Placeholder', 'model name (filled after Generate)');
-connModelEdit.Layout.Row = 12;
-connModelEdit.Layout.Column = [1 2];
-
-refreshConnBtn = uibutton(g1, 'push', 'Text', 'Refresh list', ...
-    'FontSize', 11, ...
-    'ButtonPushedFcn', @refreshConnections);
-refreshConnBtn.Layout.Row = 12;
-refreshConnBtn.Layout.Column = 3;
-
-connDropDown = uidropdown(g1, 'Items', {'(no connections yet)'});
-connDropDown.Layout.Row = 12;
-connDropDown.Layout.Column = [4 5];
-
-insertDelayBtn = uibutton(g1, 'push', 'Text', 'Insert Unit Delay', ...
-    'FontSize', 11, ...
-    'Enable', 'off', 'ButtonPushedFcn', @insertDelay);
-insertDelayBtn.Layout.Row = 12;
-insertDelayBtn.Layout.Column = 6;
-
-chkDelayFilter = uicheckbox(g1, ...
-    'Text', 'Show only connections that already have a Unit Delay', ...
-    'ValueChangedFcn', @refreshConnections);
-chkDelayFilter.Layout.Row = 13;
-chkDelayFilter.Layout.Column = [1 6];
-
-chkShowAll = uicheckbox(g1, ...
-    'Text', 'Show all connections (with and without Unit Delay)', ...
-    'ValueChangedFcn', @refreshConnections);
-chkShowAll.Layout.Row = 14;
-chkShowAll.Layout.Column = [1 6];
 
 lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', ...
     'FontWeight', 'bold');
-lblSignals.Layout.Row = 15;
+lblSignals.Layout.Row = 10;
 lblSignals.Layout.Column = [1 2];
 
 configureSignalsBtn = uibutton(g1, 'push', ...
@@ -352,38 +299,102 @@ configureSignalsBtn = uibutton(g1, 'push', ...
     'ButtonPushedFcn', @doConfigureSignals);
 safeTooltip(configureSignalsBtn, ['Creates Simulink.Signal objects for ', ...
     'Inports/Outports of the selected subsystem block.']);
-configureSignalsBtn.Layout.Row = 15;
+configureSignalsBtn.Layout.Row = 10;
 configureSignalsBtn.Layout.Column = [3 4];
 
 lblSignalsHint = uilabel(g1, ...
     'Text', 'select a Subsystem in the model, then press', ...
     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
-lblSignalsHint.Layout.Row = 15;
+lblSignalsHint.Layout.Row = 10;
 lblSignalsHint.Layout.Column = [5 6];
 
 chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
-chkCfgInports.Layout.Row = 16;
+chkCfgInports.Layout.Row = 11;
 chkCfgInports.Layout.Column = [1 2];
 
 chkCfgOutports = uicheckbox(g1, 'Text', 'Outports', 'Value', true);
-chkCfgOutports.Layout.Row = 16;
+chkCfgOutports.Layout.Row = 11;
 chkCfgOutports.Layout.Column = [3 4];
 
 chkCfgPropagation = uicheckbox(g1, 'Text', 'Propagation', 'Value', true);
-chkCfgPropagation.Layout.Row = 16;
+chkCfgPropagation.Layout.Row = 11;
 chkCfgPropagation.Layout.Column = 5;
 
 chkCfgResolver = uicheckbox(g1, 'Text', 'Resolver', 'Value', true);
-chkCfgResolver.Layout.Row = 16;
+chkCfgResolver.Layout.Row = 11;
 chkCfgResolver.Layout.Column = 6;
 
 log1 = uitextarea(g1, 'Editable', 'off', ...
     'Value', {'Ready. Choose a models folder to begin.'});
-log1.Layout.Row = 17;
+log1.Layout.Row = 12;
 log1.Layout.Column = [1 6];
 
 % =========================================================================
-%  TAB 2 - EXTRACT ATTRIBUTES
+%  TAB 2 - UNIT DELAYS (Moved to separate tab)
+% =========================================================================
+g3 = uigridlayout(tab3, [6 6]);
+g3.RowHeight = {36, 30, 30, 24, 24, '1x'};
+g3.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
+g3.Padding = [14 10 14 10];
+g3.RowSpacing = 6;
+g3.ColumnSpacing = 8;
+
+lblLoop = uilabel(g3, 'Text', ...
+    ['Loop breaker - use when Simulink reports an algebraic loop:  ' ...
+    '1) model name  2) Refresh list  3) pick connection  ' ...
+    '4) Insert Unit Delay'], ...
+    'FontWeight', 'bold');
+lblLoop.Layout.Row = 1;
+lblLoop.Layout.Column = [1 6];
+
+lblModelNameDelay = uilabel(g3, 'Text', 'Model name:', 'FontWeight', 'bold');
+lblModelNameDelay.Layout.Row = 2;
+lblModelNameDelay.Layout.Column = 1;
+
+connModelEdit = uieditfield(g3, 'text', ...
+    'Placeholder', 'model name (filled after Generate)');
+connModelEdit.Layout.Row = 2;
+connModelEdit.Layout.Column = [2 5];
+
+refreshConnBtn = uibutton(g3, 'push', 'Text', 'Refresh list', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @refreshConnections);
+refreshConnBtn.Layout.Row = 2;
+refreshConnBtn.Layout.Column = 6;
+
+lblConnectionsDelay = uilabel(g3, 'Text', 'Pick Connection:', 'FontWeight', 'bold');
+lblConnectionsDelay.Layout.Row = 3;
+lblConnectionsDelay.Layout.Column = 1;
+
+connDropDown = uidropdown(g3, 'Items', {'(no connections yet)'});
+connDropDown.Layout.Row = 3;
+connDropDown.Layout.Column = [2 5];
+
+insertDelayBtn = uibutton(g3, 'push', 'Text', 'Insert Unit Delay', ...
+    'FontSize', 11, ...
+    'Enable', 'off', 'ButtonPushedFcn', @insertDelay);
+insertDelayBtn.Layout.Row = 3;
+insertDelayBtn.Layout.Column = 6;
+
+chkDelayFilter = uicheckbox(g3, ...
+    'Text', 'Show only connections that already have a Unit Delay', ...
+    'ValueChangedFcn', @refreshConnections);
+chkDelayFilter.Layout.Row = 4;
+chkDelayFilter.Layout.Column = [1 6];
+
+chkShowAll = uicheckbox(g3, ...
+    'Text', 'Show all connections (with and without Unit Delay)', ...
+    'ValueChangedFcn', @refreshConnections);
+chkShowAll.Layout.Row = 5;
+chkShowAll.Layout.Column = [1 6];
+
+log3 = uitextarea(g3, 'Editable', 'off', ...
+    'Value', {'Ready. Enter generated model name and refresh.'});
+log3.Layout.Row = 6;
+log3.Layout.Column = [1 6];
+
+% =========================================================================
+%  TAB 3 - EXTRACT ATTRIBUTES
 % =========================================================================
 g2 = uigridlayout(tab2, [9 6]);
 g2.RowHeight = {24, 30, 30, 30, 30, 34, 20, 150, '1x'};
@@ -586,56 +597,6 @@ elseif ~isempty(candidate)
 end
 end
 
-% function refreshModelList()
-% folder = char(strtrim(modelsFolderEdit.Value));
-% if ~isfolder(folder)
-%     return;
-% end
-% files = discoverModelFiles(folder);
-% if isempty(files)
-%     availableList.Items = {'(no .slx or .mdl files found)'};
-%     state.AvailableNames = {};
-%     state.AvailableLabels = {};
-%     setStatus(['No .slx or .mdl files found in: ' folder]);
-%     return;
-% end
-
-% labels = cell(numel(files), 1);
-% names = cell(numel(files), 1);
-% for fileIndex = 1:numel(files)
-%     [~, modelName] = fileparts(files(fileIndex).name);
-%     names{fileIndex} = modelName;
-%     relativeFolder = relativePart(files(fileIndex).folder, folder);
-%     if isempty(relativeFolder)
-%         labels{fileIndex} = modelName;
-%     else
-%         labels{fileIndex} = sprintf('%s  (%s)', modelName, relativeFolder);
-%     end
-% end
-
-% state.AvailableNames = names;
-% state.AvailableLabels = labels;
-% updateAvailableLabels();
-
-% duplicateNames = unique(names);
-% if numel(duplicateNames) < numel(names)
-%     logTo(log1, ['Warning: some model filenames appear more than once ', ...
-%         'in different subfolders. Keep filenames unique - duplicates ', ...
-%         'cannot be selected.']);
-% end
-% if isempty(strtrim(state.AvailableFilter))
-%     setStatus(sprintf('%d model(s) found.', numel(files)));
-% else
-%     foundShown = numel(availableList.Items);
-%     if foundShown == 1 && ...
-%             strcmp(availableList.Items{1}, '(no matching models)')
-%         foundShown = 0;
-%     end
-%     setStatus(sprintf(['%d model(s) found, %d match the search ', ...
-%         'filter.'], numel(files), foundShown));
-% end
-% end
-
 function refreshModelList()
 folder = char(strtrim(modelsFolderEdit.Value));
 if ~isfolder(folder)
@@ -698,10 +659,6 @@ else
     end
 end
 end
-
-
-
-
 
 function updateAvailableLabels()
 baseLabels = state.AvailableLabels;
@@ -1020,9 +977,6 @@ catch
 end
 nameEdit.Value = '';
 saveFolderEdit.Value = '';
-chkCase.Value = true;
-chkBackup.Value = true;
-chkClose.Value = true;
 chkWrap.Value = true;
 connMethodDrop.Value = 'From/Goto blocks';
 layoutDrop.Value = 'Horizontal (side by side)';
@@ -1061,8 +1015,8 @@ try
 catch
 end
 state.ExtractOutput = '';
-openOutputBtn.Enable = 'off';
-openFolderBtn.Enable = 'off';
+openOutputBtn.Enable = 'on';
+openFolderBtn.Enable = 'on';
 
 logTo(log1, 'All inputs cleared (all tabs). The log is kept.');
 setStatus('All inputs cleared.');
@@ -1243,12 +1197,13 @@ end
 styleOpts = integrationStyle();
 options = struct( ...
     'PreviewOnly',          true, ...
-    'CaseInsensitiveMatch', chkCase.Value, ...
+    'CaseInsensitiveMatch', true, ... % <<< ENFORCED: always match port names case-insensitively
     'OutputFolder',         saveFolder, ...
     'ConnectionMethod',     styleOpts.ConnectionMethod, ...
     'Layout',               styleOpts.Layout, ...
     'ColorBlocks',          styleOpts.ColorBlocks, ...
     'AutoDelayFeedback',    styleOpts.AutoDelayFeedback, ...
+    'AllowMultipleInstances', true, ... % <<< ENFORCED: always allow multiple instances
     'BlockSpacing',         styleOpts.BlockSpacing, ...
     'FromModelGap',         styleOpts.FromModelGap, ...
     'ModelGotoGap',         styleOpts.ModelGotoGap, ...
@@ -1347,15 +1302,16 @@ styleOpts = integrationStyle();
 options = struct( ...
     'PreviewOnly',          false, ...
     'Overwrite',            overwrite, ...
-    'BackupExisting',       chkBackup.Value, ...
-    'CaseInsensitiveMatch', chkCase.Value, ...
-    'CloseReferencedModels', chkClose.Value, ...
+    'BackupExisting',       true, ...  % <<< ENFORCED: always backup existing models (.bak)
+    'CaseInsensitiveMatch', true, ...  % <<< ENFORCED: always match port names case-insensitively
+    'CloseReferencedModels', true, ... % <<< ENFORCED: always close referenced models when done
     'WrapInSubsystem',      chkWrap.Value, ...
     'OutputFolder',         saveFolder, ...
     'ConnectionMethod',     styleOpts.ConnectionMethod, ...
     'Layout',               styleOpts.Layout, ...
     'ColorBlocks',          styleOpts.ColorBlocks, ...
     'AutoDelayFeedback',    styleOpts.AutoDelayFeedback, ...
+    'AllowMultipleInstances', true, ... % <<< ENFORCED: always allow multiple instances
     'BlockSpacing',         styleOpts.BlockSpacing, ...
     'FromModelGap',         styleOpts.FromModelGap, ...
     'ModelGotoGap',         styleOpts.ModelGotoGap, ...
@@ -1441,7 +1397,7 @@ if isempty(result.Warnings)
 else
     lines{end + 1} = 'Warnings:';
     for warningIndex = 1:numel(result.Warnings)
-        lines{end + 1} = ['  - ' result.Warnings{warningIndex}];
+        lines{end + 1} = ['  - ' warningIndex];
     end
 end
 lines{end + 1} = '===============================================';
@@ -1503,7 +1459,7 @@ try
     [connections, connStats] = listModelConnections(modelName);
 catch listError
     insertDelayBtn.Enable = 'off';
-    logTo(log1, ['ERROR: ' errorDetails(listError)]);
+    logTo(log3, ['ERROR: ' errorDetails(listError)]); % Log directed to Tab 2's Log area
     notify(app, errorDetails(listError), 'Could not list connections', 'error');
     return;
 end
@@ -1516,7 +1472,7 @@ if isempty(connections)
     end
     insertDelayBtn.Enable = 'off';
     setStatus('No backward connections found in this model.');
-    logTo(log1, sprintf(['No backward connections found in "%s" ', ...
+    logTo(log3, sprintf(['No backward connections found in "%s" ', ...
         '(only bottom->top / right->left ones are listed).\n', ...
         'Diagnostics: %d block(s) in diagram, %d model-reference ', ...
         'block(s), %d connected model output(s), %d Goto block(s), ', ...
@@ -1624,12 +1580,12 @@ try
         open_system(connection.System);
     catch
     end
-    logTo(log1, result.Message);
+    logTo(log3, result.Message); % Log directed to Tab 2's Log area
     notify(app, sprintf('%s\n\nThe model has been saved.', result.Message), ...
         'Unit Delay inserted', 'success');
     refreshConnections();
 catch delayError
-    logTo(log1, ['ERROR: ' errorDetails(delayError)]);
+    logTo(log3, ['ERROR: ' errorDetails(delayError)]); % Log directed to Tab 2's Log area
     notify(app, errorDetails(delayError), 'Could not insert Unit Delay', 'error');
 end
 end
@@ -1678,7 +1634,7 @@ notify(app, ['Subsystem signal configuration finished.\n\n', ...
 end
 
 % =========================================================================
-%  NESTED CALLBACKS - TAB 2
+%  NESTED CALLBACKS - TAB 3
 % =========================================================================
 function refreshSubsystem(~, ~)
 try
@@ -1866,7 +1822,7 @@ end
 end
 
 % =========================================================================
-%  LOCAL FUNCTIONS
+%  LOCAL HELPER FUNCTIONS
 % =========================================================================
 function ports = getSubsystemPorts(subsystemHandle)
 if nargin < 1 || isempty(subsystemHandle)
@@ -2192,9 +2148,27 @@ drawnow limitrate;
 end
 
 function files = discoverModelFiles(folder)
-slxFiles = dir(fullfile(folder, '**', '*.slx'));
-mdlFiles = dir(fullfile(folder, '**', '*.mdl'));
-files = [slxFiles; mdlFiles];
+% discoverModelFiles Finds all .slx and .mdl files, ignoring slprj/cache/hidden folders
+%   This matches our high-reliability core engine logic.
+    slxFiles = dir(fullfile(folder, '**', '*.slx'));
+    mdlFiles = dir(fullfile(folder, '**', '*.mdl'));
+    files = [slxFiles; mdlFiles];
+    if isempty(files)
+        return;
+    end
+    files = files(~[files.isdir]);
+    
+    % Filter out slprj, hidden folders, and backup directories
+    keep = true(numel(files), 1);
+    for fIdx = 1:numel(files)
+        folderPath = files(fIdx).folder;
+        if contains(folderPath, [filesep 'slprj']) || ...
+           contains(folderPath, [filesep '.']) || ...
+           contains(folderPath, [filesep 'backup'])
+            keep(fIdx) = false;
+        end
+    end
+    files = files(keep);
 end
 
 function relativePart = relativePart(fullPath, rootFolder)
@@ -2242,7 +2216,7 @@ if ~isempty(result.ConfigParamNames)
     end
 end
 lines{end + 1} = sprintf('Internal connections (%d):', result.Counts.Internal);
-for connectionIndex = 1:numel(result.InternalConnections)
+for connectionIndex = 1:numel(connectionIndex)
     connection = result.InternalConnections(connectionIndex);
     lines{end + 1} = sprintf('  %s.%s  -->  %s.%s', ...
         connection.SrcModel, connection.SrcPort, ...
