@@ -517,6 +517,17 @@ try
         % FROM/GOTO MODE (DISAMBIGUATED TAG MAPPING)
         % ============================================================
         progressFcn(0.65, 'Adding Model Reference blocks (From/Goto style)...');
+                % Map every output signal to its producing model index for color lookup
+        signalSourceModelIndex = containers.Map('KeyType', 'char', 'ValueType', 'double');
+        for mIdx = 1:numModels
+            outs = modelInfo(mIdx).OutputNames;
+            for oIdx = 1:numel(outs)
+                sKey = normKey(outs{oIdx}, caseInsensitive);
+                if ~isKey(signalSourceModelIndex, sKey)
+                    signalSourceModelIndex(sKey) = mIdx;
+                end
+            end
+        end
 
         modelOutputKeys = cell(numModels, 1);
         usedTags = {};
@@ -718,7 +729,13 @@ try
                 add_block('simulink/Signal Routing/From', [containerSystem '/' fromName], 'GotoTag', tag, ...
                     'Position', [fromLeft, signalY - 10, fromRight, signalY + 10]);
 
-                % Apply source model color to From and UnitDelay blocks
+                % Look up source model index for coloring From & UnitDelay
+                srcModelIdx = 0;
+                sigKey = normKey(sig, caseInsensitive);
+                if isKey(signalSourceModelIndex, sigKey)
+                    srcModelIdx = signalSourceModelIndex(sigKey);
+                end
+
                 if colorBlocks
                     if srcModelIdx > 0
                         set_param([containerSystem '/' fromName], 'BackgroundColor', paletteColor(srcModelIdx));
@@ -737,6 +754,7 @@ try
                     end
                     
                     add_block('built-in/UnitDelay', [containerSystem '/' delayName], delayParams{:});
+                    
                     if colorBlocks && srcModelIdx > 0
                         set_param([containerSystem '/' delayName], 'BackgroundColor', paletteColor(srcModelIdx));
                     end
@@ -807,7 +825,7 @@ try
         %     if colorBlocks, set_param([containerSystem '/' outBlockName], 'BackgroundColor', globalOutportColor); end
         %     add_line(containerSystem, [fromBlockName '/1'], [outBlockName '/1'], 'autorouting', 'off');
         % end
-                for g = 1:numel(rootOutputs)
+        for g = 1:numel(rootOutputs)
             prodIdx = rootOutputs(g).SourceModelIndex;
             portIdx = rootOutputs(g).SourcePortIndex;
             tag = modelOutputKeys{prodIdx}{portIdx};
@@ -817,6 +835,7 @@ try
             
             add_block('simulink/Signal Routing/From', [containerSystem '/' fromBlockName], 'GotoTag', tag, ...
                 'Position', [globalFromX, signalY - 10, globalFromX + commonFromGotoWidth, signalY + 10]);
+            
             if colorBlocks
                 set_param([containerSystem '/' fromBlockName], 'BackgroundColor', paletteColor(prodIdx));
             end
