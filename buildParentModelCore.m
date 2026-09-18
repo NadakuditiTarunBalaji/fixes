@@ -650,7 +650,8 @@ try
                 
                 tag = safeName(sig);
                 isFeedbackLoop = false; % <<< SCOPED PER PORT (PREVENTS LEAKS)
-                
+                srcModelIdx = 0; % <<< FIX: Initialize srcModelIdx to 0 for every port
+
                 for connIdx = 1:numel(internalConnections)
                     conn = internalConnections(connIdx);
                     if conn.DstModelIndex == modelIndex && conn.DstPortIndex == inputIndex
@@ -698,7 +699,7 @@ try
                 % else
                 %     add_line(containerSystem, [fromName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
                 % end
-                                signalY = modelInfo(modelIndex).InputPortYs(inputIndex);
+                signalY = modelInfo(modelIndex).InputPortYs(inputIndex);
 
                 fromCounter = 1;
                 if isKey(fromCountByTag, tag), fromCounter = fromCountByTag(tag) + 1; end
