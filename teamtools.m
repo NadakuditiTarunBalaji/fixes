@@ -112,6 +112,9 @@ tabs.Layout.Column = 1;
 tab1 = uitab(tabs, 'Title', 'Build Parent Model');
 tab3 = uitab(tabs, 'Title', 'Unit Delays');
 tab2 = uitab(tabs, 'Title', 'Extract Attributes');
+% ---- Add watermark logo to all tabs ------------------------------------
+logoFile = fullfile(appFolder, 'logo.png'); % Replace 'logo.png' with your logo filename
+addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
 
 % =========================================================================
 %  TAB 1 - BUILD PARENT MODEL (12 Rows)
@@ -2648,4 +2651,24 @@ screenSize = get(groot, 'ScreenSize');
 left = max(1, round((screenSize(3) - width) / 2));
 bottom = max(1, round((screenSize(4) - height) / 2));
 position = [left bottom width height];
+end
+
+function addWatermarkToTabs(tabList, logoPath)
+% addWatermarkToTabs Adds a subtle watermark logo to the top-right corner of each tab
+    if ~isfile(logoPath)
+        return; % Silently skip if logo file does not exist yet
+    end
+    
+    for k = 1:numel(tabList)
+        targetTab = tabList{k};
+        try
+            % Create a watermark image container in the top-right corner
+            img = uiimage(targetTab);
+            img.ImageSource = logoPath;
+            img.Position = [targetTab.Position(3) - 130, targetTab.Position(4) - 50, 110, 35];
+            img.ScaleMethod = 'fit';
+            img.AutoResizeOutput = 'off';
+        catch
+        end
+    end
 end
