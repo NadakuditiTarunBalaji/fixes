@@ -177,6 +177,7 @@ end
 
 % =========================================================================
 % OPTIONAL: FORCE INHERITED SAMPLE TIMES (-1) ACROSS CHILD MODELS
+% (Runs ONLY when options.ForceInheritedSampleTimes is explicitly TRUE)
 % =========================================================================
 if options.ForceInheritedSampleTimes
     progressFcn(0.20, 'Scanning & enforcing inherited sample times (-1)...');
@@ -186,11 +187,7 @@ if options.ForceInheritedSampleTimes
         allChanges = [allChanges; collectSampleTimeChanges(modelNames{mIdx})]; %#ok<AGROW>
     end
     
-    if isempty(allChanges)
-        result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
-        result.Notes{end + 1} = 'No blocks required sample-time change (all already at -1 or inherited).';
-        result.Notes{end + 1} = '=========================================================';
-    else
+    if ~isempty(allChanges)
         result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
         for cIdx = 1:numel(allChanges)
             ch = allChanges{cIdx};
@@ -213,7 +210,7 @@ if options.ForceInheritedSampleTimes
             end
         end
         
-        % Save modified child models
+        % Save dirty child models
         for mIdx = 1:numModels
             mdlName = modelNames{mIdx};
             if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
@@ -934,20 +931,11 @@ try
         return;
     end
 
-    progressFcn(0.99, 'Saving parent and referenced models...');
+    progressFcn(0.99, 'Saving parent model...');
     
-    for mIdx = 1:numModels
-        mdlName = modelNames{mIdx};
-        if bdIsLoaded(mdlName) && bdIsDirty(mdlName)
-            try
-                save_system(mdlName);
-            catch
-            end
-        end
-    end
-
+    % Save target model safely
     try
-        save_system(targetModel, targetModelFile, 'SaveDirtyReferencedModels', 'on');
+        save_system(targetModel, targetModelFile, 'SaveDirtyReferencedModels', 'off');
     catch
         save_system(targetModel, targetModelFile);
     end
