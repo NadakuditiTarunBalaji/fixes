@@ -662,14 +662,49 @@ try
                     end
                 end
                 
-                signalY = modelInfo(modelIndex).InputPortYs(inputIndex);
+                % signalY = modelInfo(modelIndex).InputPortYs(inputIndex);
+
+                % fromCounter = 1;
+                % if isKey(fromCountByTag, tag), fromCounter = fromCountByTag(tag) + 1; end
+                % fromCountByTag(tag) = fromCounter;
+                % fromName = makeUniqueBlockName(containerSystem, sprintf('%s_From_%d', tag, fromCounter));
+                
+                % % ONLY insert UnitDelay if autoDelayFeedback is true AND this is a genuine feedback loop!
+                % inputIsFeedback = autoDelayFeedback && isFeedbackLoop;
+                
+                % if inputIsFeedback
+                %     fromRight = blockPos(1) - (fromModelGap + fromToDelayGap + 40);
+                % else
+                %     fromRight = blockPos(1) - fromGap;
+                % end
+                % fromLeft = fromRight - commonFromGotoWidth;
+                
+                % add_block('simulink/Signal Routing/From', [containerSystem '/' fromName], 'GotoTag', tag, ...
+                %     'Position', [fromLeft, signalY - 10, fromRight, signalY + 10]);
+
+                % if inputIsFeedback
+                %     delayName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
+                %     delayLeft = fromRight + fromToDelayGap;
+                    
+                %     delayParams = {'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]};
+                %     if options.ForceInheritedSampleTimes
+                %         delayParams = [{'SampleTime', '-1'}, delayParams];
+                %     end
+                    
+                %     add_block('built-in/UnitDelay', [containerSystem '/' delayName], delayParams{:});
+                %     add_line(containerSystem, [fromName '/1'], [delayName '/1'], 'autorouting', 'off');
+                %     add_line(containerSystem, [delayName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
+                %     autoDelayCount = autoDelayCount + 1;
+                % else
+                %     add_line(containerSystem, [fromName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
+                % end
+                                signalY = modelInfo(modelIndex).InputPortYs(inputIndex);
 
                 fromCounter = 1;
                 if isKey(fromCountByTag, tag), fromCounter = fromCountByTag(tag) + 1; end
                 fromCountByTag(tag) = fromCounter;
                 fromName = makeUniqueBlockName(containerSystem, sprintf('%s_From_%d', tag, fromCounter));
                 
-                % ONLY insert UnitDelay if autoDelayFeedback is true AND this is a genuine feedback loop!
                 inputIsFeedback = autoDelayFeedback && isFeedbackLoop;
                 
                 if inputIsFeedback
@@ -682,6 +717,15 @@ try
                 add_block('simulink/Signal Routing/From', [containerSystem '/' fromName], 'GotoTag', tag, ...
                     'Position', [fromLeft, signalY - 10, fromRight, signalY + 10]);
 
+                % Apply source model color to From and UnitDelay blocks
+                if colorBlocks
+                    if srcModelIdx > 0
+                        set_param([containerSystem '/' fromName], 'BackgroundColor', paletteColor(srcModelIdx));
+                    else
+                        set_param([containerSystem '/' fromName], 'BackgroundColor', globalInportColor);
+                    end
+                end
+
                 if inputIsFeedback
                     delayName = makeUniqueBlockName(containerSystem, sprintf('UnitDelay_%d', autoDelayCount + 1));
                     delayLeft = fromRight + fromToDelayGap;
@@ -692,6 +736,10 @@ try
                     end
                     
                     add_block('built-in/UnitDelay', [containerSystem '/' delayName], delayParams{:});
+                    if colorBlocks && srcModelIdx > 0
+                        set_param([containerSystem '/' delayName], 'BackgroundColor', paletteColor(srcModelIdx));
+                    end
+                    
                     add_line(containerSystem, [fromName '/1'], [delayName '/1'], 'autorouting', 'off');
                     add_line(containerSystem, [delayName '/1'], sprintf('%s/%d', modelBlockNames{modelIndex}, inputIndex), 'autorouting', 'off');
                     autoDelayCount = autoDelayCount + 1;
@@ -741,7 +789,24 @@ try
         globalFromX = rightMostEdge + max(300, 2 * blockSpacing + 100);
         globalOutX = globalFromX + commonFromGotoWidth + blockSpacing;
         
-        for g = 1:numel(rootOutputs)
+        % for g = 1:numel(rootOutputs)
+        %     prodIdx = rootOutputs(g).SourceModelIndex;
+        %     portIdx = rootOutputs(g).SourcePortIndex;
+        %     tag = modelOutputKeys{prodIdx}{portIdx};
+            
+        %     signalY = 50 + g * 36;
+        %     fromBlockName = makeUniqueBlockName(containerSystem, ['From_' tag]);
+            
+        %     add_block('simulink/Signal Routing/From', [containerSystem '/' fromBlockName], 'GotoTag', tag, ...
+        %         'Position', [globalFromX, signalY - 10, globalFromX + commonFromGotoWidth, signalY + 10]);
+            
+        %     outBlockName = makeUniqueBlockName(containerSystem, rootOutputs(g).Name);
+        %     add_block('simulink/Sinks/Out1', [containerSystem '/' outBlockName], 'Port', num2str(g), ...
+        %         'Position', [globalOutX, signalY - 10, globalOutX + 35, signalY + 10]);
+        %     if colorBlocks, set_param([containerSystem '/' outBlockName], 'BackgroundColor', globalOutportColor); end
+        %     add_line(containerSystem, [fromBlockName '/1'], [outBlockName '/1'], 'autorouting', 'off');
+        % end
+                for g = 1:numel(rootOutputs)
             prodIdx = rootOutputs(g).SourceModelIndex;
             portIdx = rootOutputs(g).SourcePortIndex;
             tag = modelOutputKeys{prodIdx}{portIdx};
@@ -751,6 +816,9 @@ try
             
             add_block('simulink/Signal Routing/From', [containerSystem '/' fromBlockName], 'GotoTag', tag, ...
                 'Position', [globalFromX, signalY - 10, globalFromX + commonFromGotoWidth, signalY + 10]);
+            if colorBlocks
+                set_param([containerSystem '/' fromBlockName], 'BackgroundColor', paletteColor(prodIdx));
+            end
             
             outBlockName = makeUniqueBlockName(containerSystem, rootOutputs(g).Name);
             add_block('simulink/Sinks/Out1', [containerSystem '/' outBlockName], 'Port', num2str(g), ...

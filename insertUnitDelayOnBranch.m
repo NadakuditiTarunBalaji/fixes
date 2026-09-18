@@ -114,8 +114,12 @@ try
     clearPortLine(srcPortHandle);
     clearPortLine(dstPortHandle);
 
+    % add_block('built-in/UnitDelay', [sys '/' blockName], 'Position', delayPosition);
+    % if ~strcmp(char(options.SampleTime), '-1')
+    %     set_param([sys '/' blockName], 'SampleTime', char(options.SampleTime));
+    % end
     add_block('built-in/UnitDelay', [sys '/' blockName], 'Position', delayPosition);
-    if ~strcmp(char(options.SampleTime), '-1')
+    if isfield(options, 'SampleTime') && ~strcmp(char(options.SampleTime), '-1')
         set_param([sys '/' blockName], 'SampleTime', char(options.SampleTime));
     end
 
