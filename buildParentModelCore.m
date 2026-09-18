@@ -177,7 +177,6 @@ end
 
 % =========================================================================
 % OPTIONAL: FORCE INHERITED SAMPLE TIMES (-1) ACROSS CHILD MODELS
-% (Runs ONLY when options.ForceInheritedSampleTimes is explicitly TRUE)
 % =========================================================================
 if options.ForceInheritedSampleTimes
     progressFcn(0.20, 'Scanning & enforcing inherited sample times (-1)...');
@@ -187,7 +186,11 @@ if options.ForceInheritedSampleTimes
         allChanges = [allChanges; collectSampleTimeChanges(modelNames{mIdx})]; %#ok<AGROW>
     end
     
-    if ~isempty(allChanges)
+    if isempty(allChanges)
+        result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
+        result.Notes{end + 1} = 'No blocks required sample-time change (all already at -1 or inherited).';
+        result.Notes{end + 1} = '=========================================================';
+    else
         result.Notes{end + 1} = '================== SAMPLE TIME CHANGES ==================';
         for cIdx = 1:numel(allChanges)
             ch = allChanges{cIdx};
@@ -646,10 +649,15 @@ try
                 sig = modelInfo(modelIndex).InputNames{inputIndex};
                 
                 tag = safeName(sig);
+                isFeedbackLoop = false; % <<< SCOPED PER PORT (PREVENTS LEAKS)
+                
                 for connIdx = 1:numel(internalConnections)
                     conn = internalConnections(connIdx);
                     if conn.DstModelIndex == modelIndex && conn.DstPortIndex == inputIndex
                         tag = modelOutputKeys{conn.SrcModelIndex}{conn.SrcPortIndex};
+                        if conn.SrcModelIndex >= modelIndex
+                            isFeedbackLoop = true;
+                        end
                         break;
                     end
                 end
@@ -661,7 +669,8 @@ try
                 fromCountByTag(tag) = fromCounter;
                 fromName = makeUniqueBlockName(containerSystem, sprintf('%s_From_%d', tag, fromCounter));
                 
-                inputIsFeedback = autoDelayFeedback && (conn.SrcModelIndex >= modelIndex);
+                % ONLY insert UnitDelay if autoDelayFeedback is true AND this is a genuine feedback loop!
+                inputIsFeedback = autoDelayFeedback && isFeedbackLoop;
                 
                 if inputIsFeedback
                     fromRight = blockPos(1) - (fromModelGap + fromToDelayGap + 40);
@@ -933,7 +942,6 @@ try
 
     progressFcn(0.99, 'Saving parent model...');
     
-    % Save target model safely
     try
         save_system(targetModel, targetModelFile, 'SaveDirtyReferencedModels', 'off');
     catch
