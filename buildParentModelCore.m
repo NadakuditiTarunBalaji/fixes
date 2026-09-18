@@ -511,6 +511,8 @@ try
 
     globalInportColor = '[0.65,0.90,0.65]';
     globalOutportColor = '[0.95,0.70,0.45]';
+    globalFromColor    = '[0.941,0.886,0.808]'; % Hex #f0e2ce (Beige/Cream)
+
 
     if strcmp(connectionMethod, 'fromgoto')
         % ============================================================
@@ -740,7 +742,7 @@ try
                     if srcModelIdx > 0
                         set_param([containerSystem '/' fromName], 'BackgroundColor', paletteColor(srcModelIdx));
                     else
-                        set_param([containerSystem '/' fromName], 'BackgroundColor', globalInportColor);
+                        set_param([containerSystem '/' fromName], 'BackgroundColor', globalFromColor);
                     end
                 end
 
