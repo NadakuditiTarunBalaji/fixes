@@ -1,7 +1,7 @@
-function teamtools
-%%TEAMTOOLS Simulink team tools in one simple app.
+function MBD_Integration
+%%MBD_Integration Simulink team tools in one simple app.
 %
-%   teamtools
+%   MBD_Integration
 %
 % Opens a single window with three tabs:
 %   1. Build Parent Model  - generate a parent model from referenced
@@ -25,8 +25,8 @@ end
 
 % ---- Clear all saved preferences so tool starts fresh every time ----------
 try
-    if ispref('teamtools')
-        rmpref('teamtools');
+    if ispref('MBD_Integration')
+        rmpref('MBD_Integration');
     end
 catch
 end
@@ -77,29 +77,49 @@ state = struct( ...
     'LastImportedMissing',    {{}});      % missing models skipped in last Excel import
 
 % ---- window ---------------------------------------------------------------
-app = uifigure('Name', 'Simulink Team Tools', ...
+app = uifigure('Name', 'SRM MODEL INTEGRATION TOOL', ...
     'Position', centeredPosition(1020, 700));
 app.CloseRequestFcn = @onAppClose;
 
 root = uigridlayout(app, [3 2]);
-root.RowHeight = {30, '1x', 24};
-root.ColumnWidth = {'1x', 110};
+root.RowHeight = {42, '1x', 24};
+root.ColumnWidth = {'1x', 135};
 root.Padding = [14 8 14 6];
 root.RowSpacing = 6;
 
-headerLabel = uilabel(root, ...
-    'Text', 'Simulink Team Tools', ...
-    'FontSize', 15, 'FontWeight', 'bold');
+topLeftGrid=uigridlayout(root,[1,2]);
+topLeftGrid.Layout.Row=1;
+topLeftGrid.ColumnWidth={100,'1x'};
+topLeftGrid.Padding=[0 0 0 0];
+topLeftGrid.ColumnSpacing=12;
+
+headerLogoImg=uiimage(topLeftGrid);
+logoFile=fullfile(pwd,'logo.png');
+if isfile(logoFile)
+    headerLogoImg.ImageSource=logoFile;
+end
+headerLogoImg.ScaleMethod='fit';
+headerLogoImg.Layout.Row=1;
+headerLogoImg.Layout.Column=1;
+
+headerLabel = uilabel(topLeftGrid, ...
+    'Text', ' MODEL INTEGRATION TOOL', ...
+    'FontSize', 24, 'FontWeight', 'Bold','BackgroundColor','#fca044');
 headerLabel.Layout.Row = 1;
-headerLabel.Layout.Column = 1;
+headerLabel.Layout.Column = 2;
 
 % Clear All on top: resets every input on all tabs
-clearAllTopBtn = uibutton(root, 'push', 'Text', 'Clear All', ...
+clearAllTopBtn = uibutton(root, 'push', 'Text', 'Clear All ⟳', ...
     'FontSize', 11, 'ButtonPushedFcn', @clearAllData);
 safeTooltip(clearAllTopBtn, ['Resets EVERY input on both tabs: model ', ...
-    'lists, folders, names, options, and loop breaker fields. The logs are kept.']);
+    'lists, folders, names, options, and Unit Delays fields. The logs are kept.']);
 clearAllTopBtn.Layout.Row = 1;
 clearAllTopBtn.Layout.Column = 2;
+clearAllTopBtn.BackgroundColor = '#4B5563'; % Slate Gray
+clearAllTopBtn.FontColor = 'white';          
+clearAllTopBtn.FontWeight = 'bold';
+
+
 
 statusLabel = uilabel(root, 'Text', 'Ready', 'FontColor', [0.35 0.35 0.35]);
 statusLabel.Layout.Row = 3;
@@ -109,12 +129,28 @@ tabs = uitabgroup(root);
 tabs.Layout.Row = 2;
 tabs.Layout.Column = 1;
 
-tab1 = uitab(tabs, 'Title', 'Build Parent Model');
-tab3 = uitab(tabs, 'Title', 'Unit Delays');
-tab2 = uitab(tabs, 'Title', 'Extract Attributes');
+% tab1 = uitab(tabs, 'Title', 'Build Parent Model', 'BackgroundColor', '#22396F', 'ForegroundColor', 'white');
+% % tab1 = uitab(tabs, 'Title', 'Build Parent Model');
+% tab3 = uitab(tabs, 'Title', 'Unit Delays');
+% tab2 = uitab(tabs, 'Title', 'Extract Attributes');
+tabs = uitabgroup(root);
+tabs.Layout.Row = 2;
+tabs.Layout.Column = 1;
+
+% tab1 body is #22396F. Text color is forced to White so it stands out.
+tab1 = uitab(tabs, 'Title', 'Build Parent Model', 'ForegroundColor', 'blue');
+
+% tab3 text color is set to dark gray
+tab3 = uitab(tabs, 'Title', 'Unit Delays', 'ForegroundColor', 'blue');
+
+% tab2 text color is set to red
+tab2 = uitab(tabs, 'Title', 'Extract Attributes', 'ForegroundColor', 'blue');
+
+
 % ---- Add watermark logo to all tabs ------------------------------------
-logoFile = fullfile(appFolder, 'logo.png'); % Replace 'logo.png' with your logo filename
-addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
+logoFile = fullfile(pwd, 'logo.png'); % Replace 'logo.png' with your logo filename
+% addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
+
 
 % =========================================================================
 %  TAB 1 - BUILD PARENT MODEL (12 Rows)
@@ -221,7 +257,7 @@ addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
 % enableMultiSelect(availableList);
 % enableMultiSelect(selectedList);
 
-% lblName = uilabel(g1, 'Text', 'Generated model name:', 'FontWeight', 'bold');
+% lblName = uilabel(g1, 'Text', 'Output Model Name:', 'FontWeight', 'bold');
 % lblName.Layout.Row = 5;
 % lblName.Layout.Column = 1;
 
@@ -231,7 +267,7 @@ addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
 % nameEdit.Layout.Row = 5;
 % nameEdit.Layout.Column = [2 3];
 
-% lblSave = uilabel(g1, 'Text', 'Save in folder:', 'FontWeight', 'bold');
+% lblSave = uilabel(g1, 'Text', 'Destination Folder::', 'FontWeight', 'bold');
 % lblSave.Layout.Row = 5;
 % lblSave.Layout.Column = 4;
 
@@ -248,13 +284,13 @@ addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
 % browseSaveBtn.Layout.Column = 6;
 
 % chkWrap = uicheckbox(g1, ...
-%     'Text', 'Create main subsystem (wrap all contents)', 'Value', true);
+%     'Text', 'Create Parent SubSystem (wrap all contents)', 'Value', true);
 % safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
 %     'placed inside one main subsystem of the parent model.']);
 % chkWrap.Layout.Row = 6;
 % chkWrap.Layout.Column = [1 6];
 
-% lblConnMethod = uilabel(g1, 'Text', 'Connect via:');
+% lblConnMethod = uilabel(g1, 'Text', 'Connection Type:');
 % lblConnMethod.Layout.Row = 7;
 % lblConnMethod.Layout.Column = 1;
 
@@ -277,7 +313,7 @@ addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
 % layoutDrop.Layout.Row = 7;
 % layoutDrop.Layout.Column = [5 6];
 
-% chkColor = uicheckbox(g1, 'Text', 'Color blocks by model', 'Value', true);
+% chkColor = uicheckbox(g1, 'Text', 'Apply Model Colors', 'Value', true);
 % chkColor.Layout.Row = 8;
 % chkColor.Layout.Column = [1 3];
 
@@ -290,7 +326,7 @@ addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
 
 % % Row 9: NEW - Force inherited sample times checkbox
 % chkForceInherited = uicheckbox(g1, ...
-%     'Text', 'Force all Inports/Outports/UnitDelays to inherited sample time (-1)', ...
+%     'Text', 'Reset All Sample Time To -1', ...
 %     'Value', false);
 % safeTooltip(chkForceInherited, ['When enabled, sweeps all Inport, Outport, and UnitDelay blocks ', ...
 %     'across the parent model AND all child models, overriding their SampleTime to "-1" (Inherited). ', ...
@@ -371,7 +407,7 @@ hint1.Layout.Row = 1;
 hint1.Layout.Column = [1 6];
 
 % ---- Row 2: models folder ----
-lblModelsFolder = uilabel(g1, 'Text', 'Models folder:', 'FontWeight', 'bold');
+lblModelsFolder = uilabel(g1, 'Text', 'Source folder:', 'FontWeight', 'bold');
 lblModelsFolder.Layout.Row = 2;
 lblModelsFolder.Layout.Column = 1;
 
@@ -393,7 +429,7 @@ lblAvail.Layout.Row = 3;
 lblAvail.Layout.Column = 1;
 
 filterEdit = uieditfield(g1, 'text', ...
-    'Placeholder', 'Type to filter...', ...
+    'Placeholder', 'Quick Search...', ...
     'ValueChangedFcn', @onAvailableFilterChanged);
 filterEdit.Layout.Row = 3;
 filterEdit.Layout.Column = 2;
@@ -401,7 +437,7 @@ safeTooltip(filterEdit, ['Type part of a model or subfolder name and ', ...
     'press Enter to shorten the list; clear the box and press Enter ', ...
     'to show every model again.']);
 
-lblSel = uilabel(g1, 'Text', 'Selected models (order matters):', 'FontWeight', 'bold');
+lblSel = uilabel(g1, 'Text', 'Calling Order (order matters):', 'FontWeight', 'bold');
 lblSel.Layout.Row = 3;
 lblSel.Layout.Column = [4 6];
 
@@ -424,11 +460,11 @@ safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
 importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', 'FontSize', 11, 'ButtonPushedFcn', @importFromExcel);
 safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
     'to import an ordered list of models from Column A.']);
-removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', 'FontSize', 11, 'ButtonPushedFcn', @removeModel);
-clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', 'FontSize', 11, 'ButtonPushedFcn', @clearSelectedModels);
+removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove ⦸', 'FontSize', 11, 'ButtonPushedFcn', @removeModel);
+clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear ⌫', 'FontSize', 11, 'ButtonPushedFcn', @clearSelectedModels);
 safeTooltip(clearListBtn, 'Empties the selected-models list only - folders and options stay as they are.');
-upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', 'FontSize', 11, 'ButtonPushedFcn', @moveModelUp);
-downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down', 'FontSize', 11, 'ButtonPushedFcn', @moveModelDown);
+upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up    🡅 ', 'FontSize', 11, 'ButtonPushedFcn', @moveModelUp);
+downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down 🡇 ', 'FontSize', 11, 'ButtonPushedFcn', @moveModelDown);
 
 selectedList = uilistbox(g1);
 selectedList.Layout.Row = 4;
@@ -439,7 +475,7 @@ enableMultiSelect(availableList);
 enableMultiSelect(selectedList);
 
 % ---- Row 5: name + save folder ----
-lblName = uilabel(g1, 'Text', 'Generated model name:', 'FontWeight', 'bold');
+lblName = uilabel(g1, 'Text', 'Output Model Name:', 'FontWeight', 'bold');
 lblName.Layout.Row = 5;
 lblName.Layout.Column = 1;
 
@@ -447,7 +483,7 @@ nameEdit = uieditfield(g1, 'text', 'Placeholder', 'GeneratedReferenceModel', 'Va
 nameEdit.Layout.Row = 5;
 nameEdit.Layout.Column = [2 3];
 
-lblSave = uilabel(g1, 'Text', 'Save in folder:', 'FontWeight', 'bold');
+lblSave = uilabel(g1, 'Text', 'Destination Folder:', 'FontWeight', 'bold');
 lblSave.Layout.Row = 5;
 lblSave.Layout.Column = 4;
 
@@ -461,14 +497,14 @@ browseSaveBtn.Layout.Column = 6;
 
 % ---- Row 6: wrap subsystem ----
 chkWrap = uicheckbox(g1, ...
-    'Text', 'Create main subsystem (wrap all contents)', 'Value', true);
+    'Text', 'Create Parent SubSystem (wrap all contents)', 'Value', true);
 safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
     'placed inside one main subsystem of the parent model.']);
 chkWrap.Layout.Row = 6;
 chkWrap.Layout.Column = [1 6];
 
-% ---- Row 7: connect via + arrangement ----
-lblConnMethod = uilabel(g1, 'Text', 'Connect via:');
+% ---- Row 7: Connection Type + arrangement ----
+lblConnMethod = uilabel(g1, 'Text', 'Connection Type:');
 lblConnMethod.Layout.Row = 7;
 lblConnMethod.Layout.Column = 1;
 
@@ -492,7 +528,7 @@ layoutDrop.Layout.Row = 7;
 layoutDrop.Layout.Column = [5 6];
 
 % ---- Row 8: color + auto delay ----
-chkColor = uicheckbox(g1, 'Text', 'Color blocks by model', 'Value', true);
+chkColor = uicheckbox(g1, 'Text', 'Apply Model Colors', 'Value', true);
 chkColor.Layout.Row = 8;
 chkColor.Layout.Column = [1 3];
 
@@ -505,7 +541,7 @@ chkAutoDelay.Layout.Column = [4 6];
 
 % ---- Row 9: force inherited sample times (OWN row, full width) ----
 chkForceInherited = uicheckbox(g1, ...
-    'Text', 'Force all Inports/Outports/UnitDelays to inherited sample time (-1)', ...
+    'Text', 'Reset All Sample Time To -1', ...
     'Value', false);
 safeTooltip(chkForceInherited, ['When enabled, sweeps all Inport, Outport, and UnitDelay blocks ', ...
     'across the parent model AND all child models, overriding their SampleTime to "-1" (Inherited). ', ...
@@ -579,7 +615,7 @@ g3.RowSpacing = 6;
 g3.ColumnSpacing = 8;
 
 lblLoop = uilabel(g3, 'Text', ...
-    ['Loop breaker - use when Simulink reports an algebraic loop:  ' ...
+    ['Loop Finder (Bottom To Top):  ' ...
     '1) model name  2) Refresh list  3) pick connection  ' ...
     '4) Insert Unit Delay'], ...
     'FontWeight', 'bold');
@@ -628,7 +664,7 @@ chkShowAll.Layout.Row = 5;
 chkShowAll.Layout.Column = [1 6];
 
 log3 = uitextarea(g3, 'Editable', 'off', ...
-    'Value', {'Ready. Enter generated model name and refresh.'});
+    'Value', {'Ready. Enter Output Model Name and refresh.'});
 log3.Layout.Row = 6;
 log3.Layout.Column = [1 6];
 
@@ -679,11 +715,11 @@ lblInfo.Layout.Column = 4;
 
 infoDropDown = uidropdown(g2, ...
     'Items', {'Header + source comments', 'Header only', 'Source comments only', 'No metadata, no comments'}, ...
-    'Value', 'Header + source comments');
+    'Value', 'Header only');
 infoDropDown.Layout.Row = 3;
 infoDropDown.Layout.Column = [5 6];
 
-lblSearch = uilabel(g2, 'Text', 'Search folder:', 'FontWeight', 'bold');
+lblSearch = uilabel(g2, 'Text', 'Source Folder:', 'FontWeight', 'bold');
 lblSearch.Layout.Row = 4;
 lblSearch.Layout.Column = 1;
 
@@ -715,9 +751,12 @@ browseDestBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
 browseDestBtn.Layout.Row = 5;
 browseDestBtn.Layout.Column = 6;
 
-chkCase2 = uicheckbox(g2, 'Text', 'Case-insensitive matching', 'Value', true);
-chkCase2.Layout.Row = 6;
-chkCase2.Layout.Column = [1 3];
+% chkCase2 = uicheckbox(g2, 'Text', 'Case-insensitive matching', 'Value', true);
+% chkCase2.Layout.Row = 6;
+% chkCase2.Layout.Column = [1 3];
+caseInsensitive= true;
+
+
 
 extractBtn = uibutton(g2, 'push', 'Text', 'Extract', ...
     'FontSize', 11, ...
@@ -1246,10 +1285,10 @@ chkForceInherited.Value = false;   % <<< NEW: reset to default off
 subsystemLabel.Text = '<no subsystem selected>';
 subsystemLabel.FontColor = [0.75 0 0];
 portDropDown.Value = 'Both';
-infoDropDown.Value = 'Header + source comments';
+infoDropDown.Value = 'Header only';
 searchEdit.Value = '';
 destEdit.Value = '';
-chkCase2.Value = true;
+caseInsensitive = true;
 tagsList.Items = {};
 try
     tagsList.Value = '';
@@ -1403,7 +1442,7 @@ if isempty(saveFolder)
     saveFolderEdit.Value = folder;
 end
 if ~isfolder(saveFolder)
-    notify(app, 'The "Save in folder" path does not exist.', ...
+    notify(app, 'The "Destination Folder:" path does not exist.', ...
         'Invalid folder', 'warning');
     folder = '';
     return;
@@ -1681,7 +1720,7 @@ if isempty(modelName)
     modelName = state.LastGeneratedModel;
 end
 if isempty(modelName)
-    setStatus('Enter the generated model name first.');
+    setStatus('Enter the Output Model Name first.');
     return;
 end
 if ~isvarname(modelName)
@@ -1706,6 +1745,24 @@ catch listError
     notify(app, errorDetails(listError), 'Could not list connections', 'error');
     return;
 end
+
+% --- DEDUPLICATION FIX: Filter out duplicate connections with identical labels ---
+if ~isempty(connections)
+    keepMask = true(size(connections));
+    seenLabels = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+    
+    for cIdx = 1:numel(connections)
+        lbl = connections(cIdx).Label;
+        if isKey(seenLabels, lbl)
+            keepMask(cIdx) = false; % Duplicate connection found -> mark for removal
+        else
+            seenLabels(lbl) = true;
+        end
+    end
+    
+    connections = connections(keepMask);
+end
+
 
 if isempty(connections)
     state.Connections = {};
@@ -1959,7 +2016,7 @@ subsystemLabel.FontColor = [0 0 0];
 
 searchFolder = char(strtrim(searchEdit.Value));
 if ~isfolder(searchFolder)
-    notify(app, 'Choose a valid search folder first (Browse...).', ...
+    notify(app, 'Choose a valid Source Folder first (Browse...).', ...
         'Missing folder', 'warning');
     return;
 end
@@ -1982,9 +2039,9 @@ end
 
 infoChoice = infoDropDown.Value;
 switch infoChoice
-    case 'Header only'
+    case 'Header + source comments'
         includeMetadata = true;
-        includeComments = false;
+        includeComments = true;
     case 'Source comments only'
         includeMetadata = false;
         includeComments = true;
@@ -1993,14 +2050,14 @@ switch infoChoice
         includeComments = false;
     otherwise
         includeMetadata = true;
-        includeComments = true;
+        includeComments = false;
 end
 
 options = struct( ...
     'PortChoice',            portDropDown.Value, ...
     'IncludeMetadata',       includeMetadata, ...
     'IncludeSourceComments', includeComments, ...
-    'CaseInsensitive',       chkCase2.Value);
+    'CaseInsensitive',       caseInsensitive);
 
 setStatus('Extracting...');
 extractBtn.Enable = 'off';
@@ -2053,7 +2110,7 @@ if isempty(state.ExtractOutput)
     return;
 end
 try
-    open(fileparts(state.ExtractOutput));
+    winopen(fileparts(state.ExtractOutput));
 catch
     setStatus('Could not open the output folder.');
 end
@@ -2087,16 +2144,16 @@ function showQuickTutorial(appFigure)
          'Tip: The order of models in the selected list determines the block layout.']
         
         ['STEP 2: Connection Options\n\n', ...
-         '  Connect via:\n', ...
+         '  Connection Type:\n', ...
          '    - "From/Goto blocks": Clean routing with Goto/From tags (recommended)\n', ...
          '    - "Direct lines": Physical signal lines between ports\n\n', ...
          '  Arrangement:\n', ...
          '    - "Horizontal": Models placed side by side\n', ...
          '    - "Vertical": Models stacked top to bottom\n\n', ...
          '  Options:\n', ...
-         '    - "Color blocks by model": Each model gets a unique color\n', ...
+         '    - "Apply Model Colors": Each model gets a unique color\n', ...
          '    - "Auto Unit Delay": Automatically inserts delays on feedback signals\n', ...
-         '    - "Create main subsystem": Wraps everything inside one subsystem']
+         '    - "Create Parent SubSystem": Wraps everything inside one subsystem']
         
         ['STEP 3: Unit Delays (Tab 2)\n\n', ...
          '  Use this tab AFTER generating a model to resolve algebraic loops:\n\n', ...
@@ -2110,7 +2167,7 @@ function showQuickTutorial(appFigure)
          '  1. Open your generated model in Simulink\n', ...
          '  2. Click on a Subsystem block in the model\n', ...
          '  3. Switch to the "Extract Attributes" tab and click "Refresh"\n', ...
-         '  4. Choose the search folder containing your .m attribute files\n', ...
+         '  4. Choose the Source Folder containing your .m attribute files\n', ...
          '  5. Set the destination file name (.m)\n', ...
          '  6. Click "Extract" to collect all matching records\n\n', ...
          'Tip: Port names from the subsystem are used as search tags.']
@@ -2451,7 +2508,7 @@ end
 function tf = cacheFolderWritable(folder)
 tf = false;
 try
-    probeFile = fullfile(folder, 'teamtools_probe.tmp');
+    probeFile = fullfile(folder, 'MBD_Integration_probe.tmp');
     probeId = fopen(probeFile, 'w');
     if probeId > 0
         fclose(probeId);

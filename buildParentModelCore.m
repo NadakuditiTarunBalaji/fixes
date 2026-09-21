@@ -751,9 +751,9 @@ try
                     delayLeft = fromRight + fromToDelayGap;
                     
                     delayParams = {'Position', [delayLeft, signalY - 10, delayLeft + 40, signalY + 10]};
-                    if options.ForceInheritedSampleTimes
-                        delayParams = [{'SampleTime', '-1'}, delayParams];
-                    end
+%                     if options.ForceInheritedSampleTimes
+                    delayParams = [{'SampleTime', '-1'}, delayParams];
+%                     end
                     
                     add_block('built-in/UnitDelay', [containerSystem '/' delayName], delayParams{:});
                     

@@ -118,7 +118,7 @@ try
     % if ~strcmp(char(options.SampleTime), '-1')
     %     set_param([sys '/' blockName], 'SampleTime', char(options.SampleTime));
     % end
-    add_block('built-in/UnitDelay', [sys '/' blockName], 'Position', delayPosition);
+    add_block('built-in/UnitDelay', [sys '/' blockName], 'Position', delayPosition,'SampleTime','-1');
     if isfield(options, 'SampleTime') && ~strcmp(char(options.SampleTime), '-1')
         set_param([sys '/' blockName], 'SampleTime', char(options.SampleTime));
     end
