@@ -1,5 +1,5 @@
 function MBD_Integration
-%%MBD_Integration Simulink team tools in one simple app.
+%%MBD_Integration MODEL INEGRATION TOOL in one simple app.
 %
 %   MBD_Integration
 %
@@ -52,7 +52,7 @@ try
         fclose(fid);
     end
     diary(logPath);
-    fprintf(['=== Simulink Team Tools - session log started %s ', ...
+    fprintf(['=== MODEL INEGRATION TOOL - session log started %s ', ...
         '(command window, warnings and errors all land in log.txt) ', ...
         '===\n'], char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
 catch
@@ -74,6 +74,7 @@ state = struct( ...
     'Connections',            {{}}, ...   % connection structs for the loop breaker
     'LastGeneratedModel',     '', ...
     'ExtractOutput',          '', ...
+    'RunUnusedAudit',         false, ...
     'LastImportedMissing',    {{}});      % missing models skipped in last Excel import
 
 % ---- window ---------------------------------------------------------------
@@ -151,243 +152,6 @@ tab2 = uitab(tabs, 'Title', 'Extract Attributes', 'ForegroundColor', 'blue');
 logoFile = fullfile(pwd, 'logo.png'); % Replace 'logo.png' with your logo filename
 % addWatermarkToTabs({tab1, tab3, tab2}, logoFile);
 
-
-% =========================================================================
-%  TAB 1 - BUILD PARENT MODEL (12 Rows)
-% =========================================================================
-% g1 = uigridlayout(tab1, [13 6]);
-% g1.RowHeight = {24, 30, 26, '1.4x', 30, 24, 26, 24, 24, 48, 24, 24, '1x'};
-% g1.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
-% g1.Padding = [14 10 14 10];
-% g1.RowSpacing = 6;
-% g1.ColumnSpacing = 8;
-
-% hint1 = uilabel(g1, ...
-%     'Text', ['1) Choose models folder    2) Add/Import models in order    ' ...
-%     '3) Preview (Validates compatibility & wiring)    4) Generate'], ...
-%     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
-% hint1.Layout.Row = 1;
-% hint1.Layout.Column = [1 6];
-
-% lblModelsFolder = uilabel(g1, 'Text', 'Models folder:', 'FontWeight', 'bold');
-% lblModelsFolder.Layout.Row = 2;
-% lblModelsFolder.Layout.Column = 1;
-
-% modelsFolderEdit = uieditfield(g1, 'text', ...
-%     'Value', '', ...
-%     'Placeholder', 'Folder that contains the .slx/.mdl models', ...
-%     'ValueChangedFcn', @onModelsFolderChanged);
-% modelsFolderEdit.Layout.Row = 2;
-% modelsFolderEdit.Layout.Column = [2 5];
-
-% browseModelsBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @browseModelsFolder);
-% browseModelsBtn.Layout.Row = 2;
-% browseModelsBtn.Layout.Column = 6;
-
-% lblAvail = uilabel(g1, 'Text', 'Available models:', 'FontWeight', 'bold');
-% lblAvail.Layout.Row = 3;
-% lblAvail.Layout.Column = 1;
-
-% % search box: filters the available-models list while you type
-% filterEdit = uieditfield(g1, 'text', ...
-%     'Placeholder', 'Type to filter...', ...
-%     'ValueChangedFcn', @onAvailableFilterChanged);
-% filterEdit.Layout.Row = 3;
-% filterEdit.Layout.Column = 2;
-% safeTooltip(filterEdit, ['Type part of a model or subfolder name and ', ...
-%     'press Enter to shorten the list; clear the box and press Enter ', ...
-%     'to show every model again.']);
-
-% lblSel = uilabel(g1, 'Text', 'Selected models (order matters):', ...
-%     'FontWeight', 'bold');
-% lblSel.Layout.Row = 3;
-% lblSel.Layout.Column = [4 6];
-
-% availableList = uilistbox(g1);
-% availableList.Layout.Row = 4;
-% availableList.Layout.Column = [1 2];
-% safeTooltip(availableList, ...
-%     'Ctrl+click or Shift+click to select several models at once');
-
-% btnGrid = uigridlayout(g1, [7 1]);
-% btnGrid.Layout.Row = 4;
-% btnGrid.Layout.Column = 3;
-% btnGrid.Padding = [2 2 2 2];
-% btnGrid.RowSpacing = 5;
-
-% addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @addModel);
-% addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @addAllModels);
-% safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
-%     'when a search filter is active, only the matching models ', ...
-%     'are added.']);
-
-% importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @importFromExcel);
-% safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
-%     'to import an ordered list of models from Column A.']);
-
-% removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @removeModel);
-% clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @clearSelectedModels);
-% safeTooltip(clearListBtn, ['Empties the selected-models list only - ', ...
-%     'folders and options stay as they are.']);
-% upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @moveModelUp);
-% downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @moveModelDown);
-
-% selectedList = uilistbox(g1);
-% selectedList.Layout.Row = 4;
-% selectedList.Layout.Column = [4 6];
-% safeTooltip(selectedList, ...
-%     'Ctrl+click or Shift+click to select several models at once');
-
-% enableMultiSelect(availableList);
-% enableMultiSelect(selectedList);
-
-% lblName = uilabel(g1, 'Text', 'Output Model Name:', 'FontWeight', 'bold');
-% lblName.Layout.Row = 5;
-% lblName.Layout.Column = 1;
-
-% nameEdit = uieditfield(g1, 'text', ...
-%     'Placeholder', 'GeneratedReferenceModel', ...
-%     'Value', '');
-% nameEdit.Layout.Row = 5;
-% nameEdit.Layout.Column = [2 3];
-
-% lblSave = uilabel(g1, 'Text', 'Destination Folder::', 'FontWeight', 'bold');
-% lblSave.Layout.Row = 5;
-% lblSave.Layout.Column = 4;
-
-% saveFolderEdit = uieditfield(g1, 'text', ...
-%     'Value', '', ...
-%     'Placeholder', '(same as the models folder)');
-% saveFolderEdit.Layout.Row = 5;
-% saveFolderEdit.Layout.Column = 5;
-
-% browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @browseSaveFolder);
-% browseSaveBtn.Layout.Row = 5;
-% browseSaveBtn.Layout.Column = 6;
-
-% chkWrap = uicheckbox(g1, ...
-%     'Text', 'Create Parent SubSystem (wrap all contents)', 'Value', true);
-% safeTooltip(chkWrap, ['After generation, every block and connection is ', ...
-%     'placed inside one main subsystem of the parent model.']);
-% chkWrap.Layout.Row = 6;
-% chkWrap.Layout.Column = [1 6];
-
-% lblConnMethod = uilabel(g1, 'Text', 'Connection Type:');
-% lblConnMethod.Layout.Row = 7;
-% lblConnMethod.Layout.Column = 1;
-
-% connMethodDrop = uidropdown(g1, ...
-%     'Items', {'From/Goto blocks', 'Direct lines'}, ...
-%     'Value', 'From/Goto blocks');
-% safeTooltip(connMethodDrop, ['From/Goto blocks: signals travel through ', ...
-%     'Goto/From tags - no crossing lines. Direct lines: physical lines ', ...
-%     'from each output to every matching input.']);
-% connMethodDrop.Layout.Row = 7;
-% connMethodDrop.Layout.Column = [2 3];
-
-% lblArrange = uilabel(g1, 'Text', 'Arrangement:');
-% lblArrange.Layout.Row = 7;
-% lblArrange.Layout.Column = 4;
-
-% layoutDrop = uidropdown(g1, ...
-%     'Items', {'Horizontal (side by side)', 'Vertical (stacked)'}, ...
-%     'Value', 'Horizontal (side by side)');
-% layoutDrop.Layout.Row = 7;
-% layoutDrop.Layout.Column = [5 6];
-
-% chkColor = uicheckbox(g1, 'Text', 'Apply Model Colors', 'Value', true);
-% chkColor.Layout.Row = 8;
-% chkColor.Layout.Column = [1 3];
-
-% chkAutoDelay = uicheckbox(g1, ...
-%     'Text', 'Auto Unit Delay on feedback signals', 'Value', true);
-% safeTooltip(chkAutoDelay, ['Feedback signals get a Unit Delay at that ', ...
-%     'model''s INPUT, which prevents algebraic loops.']);
-% chkAutoDelay.Layout.Row = 8;
-% chkAutoDelay.Layout.Column = [4 6];
-
-% % Row 9: NEW - Force inherited sample times checkbox
-% chkForceInherited = uicheckbox(g1, ...
-%     'Text', 'Reset All Sample Time To -1', ...
-%     'Value', false);
-% safeTooltip(chkForceInherited, ['When enabled, sweeps all Inport, Outport, and UnitDelay blocks ', ...
-%     'across the parent model AND all child models, overriding their SampleTime to "-1" (Inherited). ', ...
-%     'All changes are logged before being applied. WARNING: This modifies and saves child .slx files.']);
-% chkForceInherited.Layout.Row = 9;
-% chkForceInherited.Layout.Column = [1 6];
-
-% previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
-%     'FontSize', 12, ...
-%     'ButtonPushedFcn', @doPreview);
-% safeTooltip(previewBtn, ['Validates sample-time & model referencing compatibility ', ...
-%     'and displays the full connection plan. Must be run before Generate.']);
-% previewBtn.Layout.Row = 9;
-% previewBtn.Layout.Column = [2 3];
-
-% generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
-%     'FontSize', 12, ...
-%     'FontWeight', 'bold', 'Enable', 'off', 'ButtonPushedFcn', @doGenerate);
-% generateBtn.Layout.Row = 9;
-% generateBtn.Layout.Column = [4 5];
-
-% lblSignals = uilabel(g1, 'Text', 'Subsystem signals:', ...
-%     'FontWeight', 'bold');
-% lblSignals.Layout.Row = 10;
-% lblSignals.Layout.Column = [1 2];
-
-% configureSignalsBtn = uibutton(g1, 'push', ...
-%     'Text', 'Configure Signals', ...
-%     'FontSize', 11, ...
-%     'ButtonPushedFcn', @doConfigureSignals);
-% safeTooltip(configureSignalsBtn, ['Creates Simulink.Signal objects for ', ...
-%     'Inports/Outports of the selected subsystem block.']);
-% configureSignalsBtn.Layout.Row = 10;
-% configureSignalsBtn.Layout.Column = [3 4];
-
-% lblSignalsHint = uilabel(g1, ...
-%     'Text', 'select a Subsystem in the model, then press', ...
-%     'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
-% lblSignalsHint.Layout.Row = 10;
-% lblSignalsHint.Layout.Column = [5 6];
-
-% chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
-% chkCfgInports.Layout.Row = 11;
-% chkCfgInports.Layout.Column = [1 2];
-
-% chkCfgOutports = uicheckbox(g1, 'Text', 'Outports', 'Value', true);
-% chkCfgOutports.Layout.Row = 11;
-% chkCfgOutports.Layout.Column = [3 4];
-
-% chkCfgPropagation = uicheckbox(g1, 'Text', 'Propagation', 'Value', true);
-% chkCfgPropagation.Layout.Row = 11;
-% chkCfgPropagation.Layout.Column = 5;
-
-% chkCfgResolver = uicheckbox(g1, 'Text', 'Resolver', 'Value', true);
-% chkCfgResolver.Layout.Row = 11;
-% chkCfgResolver.Layout.Column = 6;
-
-% log1 = uitextarea(g1, 'Editable', 'off', ...
-%     'Value', {'Ready. Choose a models folder to begin.'});
-% log1.Layout.Row = 12;
-% log1.Layout.Column = [1 6];
 % =========================================================================
 %  TAB 1 - BUILD PARENT MODEL (13 Rows)
 % =========================================================================
@@ -401,8 +165,8 @@ g1.ColumnSpacing = 8;
 % ---- Row 1: hint ----
 hint1 = uilabel(g1, ...
     'Text', ['1) Choose models folder    2) Add/Import models in order    ' ...
-    '3) Preview (Validates compatibility & wiring)    4) Generate'], ...
-    'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
+    '3) Preview (Validates compatibility & Connections)    4) Generate'], ...
+    'FontAngle', 'italic', 'FontColor', [1 0 0]);
 hint1.Layout.Row = 1;
 hint1.Layout.Column = [1 6];
 
@@ -419,7 +183,7 @@ modelsFolderEdit.Layout.Row = 2;
 modelsFolderEdit.Layout.Column = [2 5];
 
 browseModelsBtn = uibutton(g1, 'push', 'Text', 'Browse...', ...
-    'FontSize', 11, 'ButtonPushedFcn', @browseModelsFolder);
+    'FontSize', 11, 'ButtonPushedFcn', @browseModelsFolder,BackgroundColor='#000000',FontColor='#a3fcff',FontWeight='bold');
 browseModelsBtn.Layout.Row = 2;
 browseModelsBtn.Layout.Column = 6;
 
@@ -453,19 +217,18 @@ btnGrid.Layout.Column = 3;
 btnGrid.Padding = [2 2 2 2];
 btnGrid.RowSpacing = 5;
 
-addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >>', 'FontSize', 11, 'ButtonPushedFcn', @addModel);
-addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', 'FontSize', 11, 'ButtonPushedFcn', @addAllModels);
+addBtn = uibutton(btnGrid, 'push', 'Text', 'Add >', 'FontSize', 15, 'ButtonPushedFcn', @addModel,BackgroundColor='#000000',FontColor='#ffa652',FontWeight='bold');
+addAllBtn = uibutton(btnGrid, 'push', 'Text', 'Add All >>', 'FontSize', 15, 'ButtonPushedFcn', @addAllModels,BackgroundColor='#000000',FontColor='#ffa652',FontWeight='bold');
 safeTooltip(addAllBtn, ['Adds every model shown in the left list - ', ...
     'when a search filter is active, only the matching models are added.']);
-importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Import Excel...', 'FontSize', 11, 'ButtonPushedFcn', @importFromExcel);
+importExcelBtn = uibutton(btnGrid, 'push', 'Text', 'Get Excel', 'FontSize', 15, 'ButtonPushedFcn', @importFromExcel,backgroundColor='#000000',FontColor='#ffa652',FontWeight='bold');
 safeTooltip(importExcelBtn, ['Upload an Excel or CSV file (.xlsx, .xlsm, .xls, .csv) ', ...
     'to import an ordered list of models from Column A.']);
-removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove ⦸', 'FontSize', 11, 'ButtonPushedFcn', @removeModel);
-clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear ⌫', 'FontSize', 11, 'ButtonPushedFcn', @clearSelectedModels);
+removeBtn = uibutton(btnGrid, 'push', 'Text', 'Remove ⦸', 'FontSize', 15, 'ButtonPushedFcn', @removeModel,backgroundColor='#000000',FontColor='#ffa652',FontWeight='bold');
+clearListBtn = uibutton(btnGrid, 'push', 'Text', 'Clear ⌫', 'FontSize', 15, 'ButtonPushedFcn', @clearSelectedModels,backgroundColor='#000000',FontColor='#ffa652',FontWeight='bold');
 safeTooltip(clearListBtn, 'Empties the selected-models list only - folders and options stay as they are.');
-upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up    🡅 ', 'FontSize', 11, 'ButtonPushedFcn', @moveModelUp);
-downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down 🡇 ', 'FontSize', 11, 'ButtonPushedFcn', @moveModelDown);
-
+upBtn = uibutton(btnGrid, 'push', 'Text', 'Move Up   🡅 ', 'FontSize', 15, 'ButtonPushedFcn', @moveModelUp,backgroundColor='#000000',FontColor='#ffa652',FontWeight='bold');
+downBtn = uibutton(btnGrid, 'push', 'Text', 'Move Down 🡇 ', 'FontSize', 15, 'ButtonPushedFcn', @moveModelDown,backgroundColor='#000000',FontColor='#ffa652',FontWeight='bold',WordWrap=true);
 selectedList = uilistbox(g1);
 selectedList.Layout.Row = 4;
 selectedList.Layout.Column = [4 6];
@@ -491,7 +254,7 @@ saveFolderEdit = uieditfield(g1, 'text', 'Value', '', 'Placeholder', '(same as t
 saveFolderEdit.Layout.Row = 5;
 saveFolderEdit.Layout.Column = 5;
 
-browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', 'FontSize', 11, 'ButtonPushedFcn', @browseSaveFolder);
+browseSaveBtn = uibutton(g1, 'push', 'Text', 'Browse...', 'FontSize', 11, 'ButtonPushedFcn', @browseSaveFolder,BackgroundColor='#000000',FontColor='#a3fcff',FontWeight='bold');
 browseSaveBtn.Layout.Row = 5;
 browseSaveBtn.Layout.Column = 6;
 
@@ -551,7 +314,7 @@ chkForceInherited.Layout.Column = [1 6];
 
 % ---- Row 10: Preview + Generate (OWN row, height 48) ----
 previewBtn = uibutton(g1, 'push', 'Text', 'Preview', ...
-    'FontSize', 12, 'ButtonPushedFcn', @doPreview);
+    'FontSize', 12, 'ButtonPushedFcn', @doPreview,BackgroundColor='#4B5563',FontColor='white',FontWeight='bold');
 safeTooltip(previewBtn, ['Validates sample-time & model referencing compatibility ', ...
     'and displays the full connection plan. Must be run before Generate.']);
 previewBtn.Layout.Row = 10;
@@ -559,7 +322,7 @@ previewBtn.Layout.Column = [2 3];
 
 generateBtn = uibutton(g1, 'push', 'Text', 'Generate', ...
     'FontSize', 12, 'FontWeight', 'bold', 'Enable', 'off', ...
-    'ButtonPushedFcn', @doGenerate);
+    'ButtonPushedFcn', @doGenerate,BackgroundColor='#4B5563',FontColor='#52ff86',FontWeight='bold');
 generateBtn.Layout.Row = 10;
 generateBtn.Layout.Column = [4 5];
 
@@ -570,17 +333,17 @@ lblSignals.Layout.Column = [1 2];
 
 configureSignalsBtn = uibutton(g1, 'push', ...
     'Text', 'Configure Signals', 'FontSize', 11, ...
-    'ButtonPushedFcn', @doConfigureSignals);
+    'ButtonPushedFcn', @doConfigureSignals,BackgroundColor='#1100ff',FontColor='#ffffff',FontWeight='bold');
 safeTooltip(configureSignalsBtn, ['Creates Simulink.Signal objects for ', ...
     'Inports/Outports of the selected subsystem block.']);
 configureSignalsBtn.Layout.Row = 11;
-configureSignalsBtn.Layout.Column = [3 4];
+configureSignalsBtn.Layout.Column = [2 3];
 
 lblSignalsHint = uilabel(g1, ...
-    'Text', 'select a Subsystem in the model, then press', ...
-    'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
+    'Text', 'select a Subsystem in the model, then Click Configure Signals', ...
+    'FontAngle', 'italic', 'FontColor', [1 0 0]);
 lblSignalsHint.Layout.Row = 11;
-lblSignalsHint.Layout.Column = [5 6];
+lblSignalsHint.Layout.Column = [4 6];
 
 % ---- Row 12: inports/outports/propagation/resolver ----
 chkCfgInports = uicheckbox(g1, 'Text', 'Inports', 'Value', true);
@@ -607,8 +370,8 @@ log1.Layout.Column = [1 6];
 % =========================================================================
 %  TAB 2 - UNIT DELAYS (Moved to separate tab)
 % =========================================================================
-g3 = uigridlayout(tab3, [6 6]);
-g3.RowHeight = {36, 30, 30, 24, 24, '1x'};
+g3 = uigridlayout(tab3, [7 6]);
+g3.RowHeight = {36, 30, 30, 24, 24, 300, '1x'};
 g3.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
 g3.Padding = [14 10 14 10];
 g3.RowSpacing = 6;
@@ -618,7 +381,7 @@ lblLoop = uilabel(g3, 'Text', ...
     ['Loop Finder (Bottom To Top):  ' ...
     '1) model name  2) Refresh list  3) pick connection  ' ...
     '4) Insert Unit Delay'], ...
-    'FontWeight', 'bold');
+    'FontAngle','italic','FontColor',[1 0 0]);
 lblLoop.Layout.Row = 1;
 lblLoop.Layout.Column = [1 6];
 
@@ -633,7 +396,7 @@ connModelEdit.Layout.Column = [2 5];
 
 refreshConnBtn = uibutton(g3, 'push', 'Text', 'Refresh list', ...
     'FontSize', 11, ...
-    'ButtonPushedFcn', @refreshConnections);
+    'ButtonPushedFcn', @refreshConnections,BackgroundColor='#ffffff',FontColor='#0077ff',FontWeight='bold');
 refreshConnBtn.Layout.Row = 2;
 refreshConnBtn.Layout.Column = 6;
 
@@ -647,7 +410,7 @@ connDropDown.Layout.Column = [2 5];
 
 insertDelayBtn = uibutton(g3, 'push', 'Text', 'Insert Unit Delay', ...
     'FontSize', 11, ...
-    'Enable', 'off', 'ButtonPushedFcn', @insertDelay);
+    'Enable', 'off', 'ButtonPushedFcn', @insertDelay,BackgroundColor='#4B5563',FontColor='white',FontWeight='bold');
 insertDelayBtn.Layout.Row = 3;
 insertDelayBtn.Layout.Column = 6;
 
@@ -663,16 +426,27 @@ chkShowAll = uicheckbox(g3, ...
 chkShowAll.Layout.Row = 5;
 chkShowAll.Layout.Column = [1 6];
 
+connDetailsTable = uitable(g3, ...
+    'ColumnName', {'Order', 'System/Subsystem', 'Source Block', ...
+    'Destination Block', 'Connection Type/Tag', 'Unit Delay'}, ...
+    'Data', cell(0, 6), ...
+    'ColumnEditable', false, ...
+    'RowName', []);
+connDetailsTable.Layout.Row = 6;
+connDetailsTable.Layout.Column = [1 6];
+safeTooltip(connDetailsTable, ...
+    'Detailed view of the filtered backward connections. The dropdown above remains the insertion target.');
+
 log3 = uitextarea(g3, 'Editable', 'off', ...
     'Value', {'Ready. Enter Output Model Name and refresh.'});
-log3.Layout.Row = 6;
+log3.Layout.Row = 7;
 log3.Layout.Column = [1 6];
 
 % =========================================================================
 %  TAB 3 - EXTRACT ATTRIBUTES
 % =========================================================================
-g2 = uigridlayout(tab2, [9 6]);
-g2.RowHeight = {24, 30, 30, 30, 30, 34, 20, 150, '1x'};
+g2 = uigridlayout(tab2, [13 6]);
+g2.RowHeight = {24, 30, 30, 30, 30, 34, 24, 150, 28, 50, 28, 50, '1x'};
 g2.ColumnWidth = {150, '1x', 105, 140, '1x', 105};
 g2.Padding = [14 10 14 10];
 g2.RowSpacing = 6;
@@ -681,7 +455,7 @@ g2.ColumnSpacing = 8;
 hint2 = uilabel(g2, ...
     'Text', ['1) Click a subsystem in your Simulink model    2) Refresh    ' ...
     '3) Choose folder    4) Extract'], ...
-    'FontAngle', 'italic', 'FontColor', [0.4 0.4 0.4]);
+    'FontAngle', 'italic', 'FontColor', [1 0 0]);
 hint2.Layout.Row = 1;
 hint2.Layout.Column = [1 6];
 
@@ -694,9 +468,9 @@ subsystemLabel = uilabel(g2, 'Text', '<no subsystem selected>', ...
 subsystemLabel.Layout.Row = 2;
 subsystemLabel.Layout.Column = [2 5];
 
-refreshSubBtn = uibutton(g2, 'push', 'Text', 'Refresh', ...
+refreshSubBtn = uibutton(g2, 'push', 'Text', 'Refresh ↺', ...
     'FontSize', 11, ...
-    'ButtonPushedFcn', @refreshSubsystem);
+    'ButtonPushedFcn', @refreshSubsystem ,BackgroundColor='#ffffff',FontColor='#0077ff',FontWeight='bold');
 refreshSubBtn.Layout.Row = 2;
 refreshSubBtn.Layout.Column = 6;
 
@@ -731,7 +505,7 @@ searchEdit.Layout.Column = [2 5];
 
 browseSearchBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
     'FontSize', 11, ...
-    'ButtonPushedFcn', @browseSearchFolder);
+    'ButtonPushedFcn', @browseSearchFolder,BackgroundColor='#000000',FontColor='#a3fcff',FontWeight='bold');
 browseSearchBtn.Layout.Row = 4;
 browseSearchBtn.Layout.Column = 6;
 
@@ -747,7 +521,7 @@ destEdit.Layout.Column = [2 5];
 
 browseDestBtn = uibutton(g2, 'push', 'Text', 'Browse...', ...
     'FontSize', 11, ...
-    'ButtonPushedFcn', @browseOutputFile);
+    'ButtonPushedFcn', @browseOutputFile,BackgroundColor='#000000',FontColor='#a3fcff',FontWeight='bold');
 browseDestBtn.Layout.Row = 5;
 browseDestBtn.Layout.Column = 6;
 
@@ -756,25 +530,54 @@ browseDestBtn.Layout.Column = 6;
 % chkCase2.Layout.Column = [1 3];
 caseInsensitive= true;
 
+diagnosticSwitch = uiswitch(g2, 'toggle', ...
+    'ValueChangedFcn', @onDiagnosticToggle);
+diagnosticSwitch.Items = {'Off', 'On'};
+diagnosticSwitch.Value = 'Off';
+diagnosticSwitch.Orientation = 'horizontal';
+diagnosticSwitch.FontSize = 11;
+diagnosticSwitch.FontWeight = 'bold';
+diagnosticSwitch.FontColor = [0 0 0];
+diagnosticSwitch.Layout.Row = 10;
+diagnosticSwitch.Layout.Column = 2;
+safeTooltip(diagnosticSwitch, ['Diagnostic audit runs Simulink.findVars after SLDD generation ', ...
+    'to report unused dictionary variables. It may take additional time and produce ', ...
+    'Simulink diagnostic warnings. Confirmation is required whenever the toggle changes.']);
 
+diagnosticLabel = uilabel(g2, 'Text', 'Diagnostic audit:', ...
+    'FontWeight', 'bold');
+diagnosticLabel.Layout.Row = 10;
+diagnosticLabel.Layout.Column = 1;
+
+previewSlddBtn = uibutton(g2, 'push', 'Text', 'Preview SLDD', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @previewSldd,BackgroundColor='#000000',FontColor='#a3fcff',FontWeight='bold');
+previewSlddBtn.Layout.Row = 10;
+previewSlddBtn.Layout.Column = [3 4];
+
+generateSlddBtn = uibutton(g2, 'push', 'Text', 'Generate SLDD', ...
+    'FontSize', 11, ...
+    'ButtonPushedFcn', @generateSldd,BackgroundColor='#4B5563',FontColor='#52ff86',FontWeight='bold');
+generateSlddBtn.Layout.Row = 10;
+generateSlddBtn.Layout.Column = [5 6];
 
 extractBtn = uibutton(g2, 'push', 'Text', 'Extract', ...
     'FontSize', 11, ...
-    'FontWeight', 'bold', 'ButtonPushedFcn', @doExtract);
+    'FontWeight', 'bold', 'ButtonPushedFcn', @doExtract,BackgroundColor='#4B5563',FontColor='white',FontWeight='bold');
 extractBtn.Layout.Row = 6;
-extractBtn.Layout.Column = 4;
+extractBtn.Layout.Column = [1 2];
 
 openOutputBtn = uibutton(g2, 'push', 'Text', 'Open Output', ...
     'FontSize', 11, ...
-    'Enable', 'off', 'ButtonPushedFcn', @openOutputFile);
+    'Enable', 'off', 'ButtonPushedFcn', @openOutputFile,BackgroundColor='#000000',FontColor='#FFFFFF',FontWeight='bold');
 openOutputBtn.Layout.Row = 6;
-openOutputBtn.Layout.Column = 5;
+openOutputBtn.Layout.Column = [3 4];
 
 openFolderBtn = uibutton(g2, 'push', 'Text', 'Open Folder', ...
     'FontSize', 11, ...
-    'Enable', 'off', 'ButtonPushedFcn', @openOutputFolder);
+    'Enable', 'off', 'ButtonPushedFcn', @openOutputFolder,BackgroundColor='#000000',FontColor='#FFFFFF',FontWeight='bold');
 openFolderBtn.Layout.Row = 6;
-openFolderBtn.Layout.Column = 6;
+openFolderBtn.Layout.Column = [5 6];
 
 lblTags = uilabel(g2, 'Text', 'Tags that will be searched:', ...
     'FontWeight', 'bold');
@@ -785,9 +588,41 @@ tagsList = uilistbox(g2);
 tagsList.Layout.Row = 8;
 tagsList.Layout.Column = [1 6];
 
+storageHeader = uilabel(g2, 'Text', 'STORAGE CLASS FOR GENERATED DATA FILE', ...
+    'FontWeight', 'bold');
+storageHeader.Layout.Row = 9;
+storageHeader.Layout.Column = [1 6];
+
+storageClassDropDown = uidropdown(g2, ...
+    'Items', {'Auto', 'ExportedGlobal', 'ImportedExtern'}, ...
+    'Value', 'Auto');
+storageClassDropDown.Layout.Row = 10;
+storageClassDropDown.Layout.Column = [1 3];
+safeTooltip(storageClassDropDown, ...
+    'Select the StorageClass to apply to existing assignments in the model data file.');
+
+applyStorageClassBtn = uibutton(g2, 'push', 'Text', 'Apply StorageClass', ...
+    'FontSize', 11, ...
+    'FontWeight', 'bold', ...
+    'ButtonPushedFcn', @applyStorageClass, ...
+    'BackgroundColor', '#4B5563', ...
+    'FontColor', 'white');
+applyStorageClassBtn.Layout.Row = 10;
+applyStorageClassBtn.Layout.Column = [4 6];
+
+slddHeader = uilabel(g2, 'Text', 'GENERATE SLDD FILE', ...
+    'FontWeight', 'bold');
+slddHeader.Layout.Row = 11;
+slddHeader.Layout.Column = [1 6];
+
+diagnosticSwitch.Layout.Row = 12;
+diagnosticLabel.Layout.Row = 12;
+previewSlddBtn.Layout.Row = 12;
+generateSlddBtn.Layout.Row = 12;
+
 log2 = uitextarea(g2, 'Editable', 'off', ...
     'Value', {'Ready. Select a subsystem in Simulink and press Refresh.'});
-log2.Layout.Row = 9;
+log2.Layout.Row = 13;
 log2.Layout.Column = [1 6];
 
 % ---- initial content: always start clean -----------------------------------
@@ -827,7 +662,7 @@ end
 
 function onAppClose(~, ~)
 try
-    fprintf(['=== Simulink Team Tools - session log closed %s ', ...
+    fprintf(['=== MODEL INEGRATION TOOL - session log closed %s ', ...
         '===\n'], char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')));
 catch
 end
@@ -1269,6 +1104,7 @@ connModelEdit.Value = '';
 chkDelayFilter.Value = false;
 chkShowAll.Value = false;
 state.Connections = {};
+connDetailsTable.Data = cell(0, 6);
 state.LastGeneratedModel = '';
 try
     connDropDown.Items = {'(no connections yet)'};
@@ -1286,6 +1122,7 @@ subsystemLabel.Text = '<no subsystem selected>';
 subsystemLabel.FontColor = [0.75 0 0];
 portDropDown.Value = 'Both';
 infoDropDown.Value = 'Header only';
+storageClassDropDown.Value = 'Auto';
 searchEdit.Value = '';
 destEdit.Value = '';
 caseInsensitive = true;
@@ -1474,7 +1311,7 @@ catch valErr
     logTo(log1, ['WARNING: Compatibility check failed: ' errorDetails(valErr)]);
 end
 
-% --- Step 2: Structural Wiring Preview ---
+% --- Step 2: Structural Connections Preview ---
 styleOpts = integrationStyle();
 options = struct( ...
     'PreviewOnly',              true, ...
@@ -1512,7 +1349,7 @@ end
 previewBtn.Enable = 'off';
 generateBtn.Enable = 'on';
 
-% Combine wiring plan and validation report into log
+% Combine Connections plan and validation report into log
 planLines = renderPlanLines(result, state.LastImportedMissing);
 
 if ~isempty(valReport)
@@ -1688,10 +1525,9 @@ logMany(log1, lines);
 
 state.LastGeneratedModel = result.TargetModel;
 connModelEdit.Value = result.TargetModel;
-destEdit.Value = [result.TargetModel, '_data.m'];
-logTo(log1, sprintf(['Extract destination (Tab 3) set to "%s_data.m" - ', ...
-    'edit it there if you want a different name.'], ...
-    result.TargetModel));
+destEdit.Value = fullfile(saveFolder, [result.TargetModel, '_data.m']);
+logTo(log1, sprintf('Extract destination (Tab 3) set to "%s".', ...
+    destEdit.Value));
 refreshConnections();
 
 if isempty(result.Warnings)
@@ -1729,6 +1565,7 @@ if ~isvarname(modelName)
 end
 if ~bdIsLoaded(modelName)
     insertDelayBtn.Enable = 'off';
+    connDetailsTable.Data = cell(0, 6);
     try
         connDropDown.Items = {'(model is not open)'};
     catch
@@ -1741,10 +1578,12 @@ try
     [connections, connStats] = listModelConnections(modelName);
 catch listError
     insertDelayBtn.Enable = 'off';
+    connDetailsTable.Data = cell(0, 6);
     logTo(log3, ['ERROR: ' errorDetails(listError)]);
     notify(app, errorDetails(listError), 'Could not list connections', 'error');
     return;
 end
+
 
 % --- DEDUPLICATION FIX: Filter out duplicate connections with identical labels ---
 if ~isempty(connections)
@@ -1766,6 +1605,7 @@ end
 
 if isempty(connections)
     state.Connections = {};
+    connDetailsTable.Data = cell(0, 6);
     try
         connDropDown.Items = {'(no model-to-model connections found)'};
     catch
@@ -1798,6 +1638,7 @@ else
 end
 if isempty(shownConnections)
     state.Connections = {};
+    connDetailsTable.Data = cell(0, 6);
     try
         if strcmp(filterMode, 'withdelay')
             placeholder = '(no connections with a Unit Delay)';
@@ -1816,6 +1657,7 @@ if isempty(shownConnections)
     end
     return;
 end
+connDetailsTable.Data = renderConnectionTable(shownConnections);
 labels = cellfun(@(c) c.Label, shownConnections, 'UniformOutput', false);
 try
     connDropDown.Items = labels;
@@ -1832,6 +1674,28 @@ switch filterMode
         setStatus(sprintf('%d connection(s) shown (with Unit Delay).', numel(labels)));
     otherwise
         setStatus(sprintf('%d connection(s) need a Unit Delay.', numel(labels)));
+end
+end
+
+function tableData = renderConnectionTable(connections)
+tableData = cell(numel(connections), 6);
+for rowIndex = 1:numel(connections)
+    connection = connections{rowIndex};
+    if isfield(connection, 'Kind') && strcmp(connection.Kind, 'fromgoto')
+        typeText = 'From/Goto';
+        if isfield(connection, 'Tag') && ~isempty(connection.Tag)
+            typeText = ['From/Goto: ' char(connection.Tag)];
+        end
+    else
+        typeText = 'Direct line';
+    end
+    if isfield(connection, 'DelayNames') && ~isempty(connection.DelayNames)
+        delayText = strjoin(connection.DelayNames(:).', ', ');
+    else
+        delayText = 'None';
+    end
+    tableData(rowIndex, :) = {rowIndex, connection.System, ...
+        connection.SrcBlock, connection.DstBlock, typeText, delayText};
 end
 end
 
@@ -2094,6 +1958,213 @@ notify(app, sprintf(['Extraction complete.\n\nFiles read: %d\n', ...
     result.OutputFile), 'Extraction complete', 'success');
 end
 
+function applyStorageClass(~, ~)
+try
+    dataFilePath = resolveDestinationDataFile();
+catch storageError
+    logTo(log2, ['StorageClass update failed: ' errorDetails(storageError)]);
+    notify(app, errorDetails(storageError), 'StorageClass update failed', 'warning');
+    return;
+end
+
+backupPath = [dataFilePath '.bak'];
+overwriteBackup = false;
+if isfile(backupPath)
+    overwriteBackup = confirmDialog(app, ...
+        sprintf(['A backup already exists:\n%s\n\n', ...
+        'Replace the existing backup before modifying the data file?'], backupPath), ...
+        'Existing backup found', 'Replace backup', 'Cancel');
+    if ~overwriteBackup
+        logTo(log2, 'StorageClass update cancelled; existing backup was preserved.');
+        return;
+    end
+end
+
+selectedStorageClass = char(storageClassDropDown.Value);
+logTo(log2, sprintf('Applying StorageClass "%s" to %s.', ...
+    selectedStorageClass, dataFilePath));
+try
+    result = replaceStorageClass(selectedStorageClass, dataFilePath, overwriteBackup);
+catch storageError
+    logTo(log2, ['StorageClass update failed: ' errorDetails(storageError)]);
+    notify(app, errorDetails(storageError), 'StorageClass update failed', 'error');
+    return;
+end
+
+if isempty(result) || ~result.Changed
+    warningLines = {'StorageClass update made no changes.'};
+    if ~isempty(result) && ~isempty(result.Warnings)
+        warningLines = [warningLines; result.Warnings(:)];
+    end
+    logMany(log2, warningLines);
+    notify(app, strjoin(warningLines, newline), ...
+        'StorageClass update warning', 'warning');
+    return;
+end
+
+reportLines = {sprintf('StorageClass updated: %s', selectedStorageClass), ...
+    sprintf('Data file: %s', dataFilePath), ...
+    sprintf('Assignments replaced: %d', result.ReplacementCount), ...
+    sprintf('Backup: %s', result.BackupPath)};
+if ~isempty(result.Warnings)
+    reportLines = [reportLines; result.Warnings(:)];
+end
+logMany(log2, reportLines);
+notify(app, sprintf('StorageClass updated successfully.\n\n%s', dataFilePath), ...
+    'StorageClass update', 'success');
+end
+
+function dataFilePath = resolveDestinationDataFile()
+dataFilePath = char(strtrim(destEdit.Value));
+if isempty(dataFilePath)
+    error('resolveDestinationDataFile:MissingPath', ...
+        'Specify the destination data file in the Destination file field first.');
+end
+
+[folder, ~, extension] = fileparts(dataFilePath);
+if isempty(extension)
+    dataFilePath = [dataFilePath '.m'];
+    [folder, ~, ~] = fileparts(dataFilePath);
+elseif ~strcmpi(extension, '.m')
+    error('resolveDestinationDataFile:InvalidExtension', ...
+        'The destination data file must have a .m extension.');
+end
+
+if isempty(folder)
+    searchFolderPath = char(strtrim(searchEdit.Value));
+    if isfolder(searchFolderPath)
+        dataFilePath = fullfile(searchFolderPath, dataFilePath);
+    else
+        dataFilePath = fullfile(pwd, dataFilePath);
+    end
+end
+
+if ~isfile(dataFilePath)
+    error('resolveDestinationDataFile:MissingFile', ...
+        'Destination data file does not exist: %s', dataFilePath);
+end
+end
+
+function result = resolveSlddContext()
+try
+    ports = getSubsystemPorts();
+catch selectionError
+    error('resolveSlddContext:NoSelection', selectionError.message);
+end
+modelRoot = bdroot(ports.Handle);
+if isnumeric(modelRoot)
+    modelName = get_param(modelRoot, 'Name');
+else
+    modelName = char(modelRoot);
+end
+if isempty(modelName)
+    error('resolveSlddContext:NoModel', 'The selected subsystem is not part of a loaded model.');
+end
+if ~bdIsLoaded(modelName)
+    load_system(modelName);
+end
+modelFile = get_param(modelName, 'FileName');
+if isempty(modelFile) || ~isfile(modelFile)
+    modelFile = fullfile(pwd, [modelName '.slx']);
+end
+folder = fileparts(modelFile);
+if isempty(folder)
+    folder = pwd;
+end
+scriptFile = fullfile(folder, [modelName '_data.m']);
+if ~isfile(scriptFile)
+    error('resolveSlddContext:NoDataScript', ['No data script was found for model "' modelName '" in ' folder '.']);
+end
+result = struct('ModelName', modelName, 'ModelFile', modelFile, 'Folder', folder, 'DataScript', scriptFile, 'SubsystemPath', ports.Path);
+end
+
+function previewSldd(~, ~)
+try
+    ctx = resolveSlddContext();
+catch previewError
+    notify(app, previewError.message, 'Preview SLDD failed', 'warning');
+    logTo(log2, ['SLDD preview failed: ' previewError.message]);
+    return;
+end
+
+logTo(log2, ['Previewing SLDD for model "' ctx.ModelName '" in ' ctx.Folder]);
+try
+    convert_m_to_sldd('rootDir', ctx.Folder, 'modelName', ctx.ModelName, ...
+        'checkOnly', true, 'overwrite', true, 'verbose', true, ...
+        'ProgressFcn', @(fraction, message) logSlddProgress(log2, fraction, message));
+    setStatus('SLDD preview complete.');
+    notify(app, ['SLDD preview complete for model "' ctx.ModelName '".\n\nCheck the Command Window for unresolved variables.'], 'SLDD preview', 'info');
+catch previewError
+    logTo(log2, ['SLDD preview error: ' errorDetails(previewError)]);
+    notify(app, errorDetails(previewError), 'SLDD preview failed', 'error');
+    setStatus('SLDD preview failed.');
+end
+end
+
+function generateSldd(~, ~)
+try
+    ctx = resolveSlddContext();
+catch generateError
+    notify(app, generateError.message, 'Generate SLDD failed', 'warning');
+    logTo(log2, ['SLDD generate failed: ' generateError.message]);
+    return;
+end
+
+answer = questdlg(sprintf(['Generate the SLDD dictionaries for model "%s" and attach them to the model?\n\nFolder:\n%s'], ctx.ModelName, ctx.Folder), ...
+    'Generate SLDD', 'Yes', 'No', 'No');
+if ~strcmp(answer, 'Yes')
+    logTo(log2, ['SLDD generation cancelled for model "' ctx.ModelName '".']);
+    return;
+end
+
+logTo(log2, ['Generating SLDD for model "' ctx.ModelName '" in ' ctx.Folder]);
+try
+    convert_m_to_sldd('rootDir', ctx.Folder, 'modelName', ctx.ModelName, ...
+        'checkOnly', false, 'overwrite', true, 'verbose', true, ...
+        'runUnusedAudit', state.RunUnusedAudit, ...
+        'ProgressFcn', @(fraction, message) logSlddProgress(log2, fraction, message));
+    setStatus('SLDD generation complete.');
+    notify(app, ['SLDD generation complete for "' ctx.ModelName '".\n\nThe dictionaries were created and attached to the model.'], 'SLDD generation', 'success');
+catch generateError
+    logTo(log2, ['SLDD generation error: ' errorDetails(generateError)]);
+    notify(app, errorDetails(generateError), 'SLDD generation failed', 'error');
+    setStatus('SLDD generation failed.');
+end
+end
+
+function logSlddProgress(logArea, fraction, message)
+if nargin < 2 || isempty(fraction)
+    fraction = 0;
+end
+logTo(logArea, sprintf('[SLDD %3.0f%%] %s', 100 * fraction, char(message)));
+end
+
+function onDiagnosticToggle(~, ~)
+requestedValue = strcmpi(diagnosticSwitch.Value, 'On');
+previousValue = state.RunUnusedAudit;
+
+if requestedValue
+    message = ['Enable the unused-variable diagnostic audit?\n\n', ...
+        'SLDD generation will run Simulink.findVars after dictionary creation. ', ...
+        'This may take additional time and produce Simulink diagnostic warnings.'];
+else
+    message = ['Disable the unused-variable diagnostic audit?\n\n', ...
+        'SLDD generation will skip Simulink.findVars. Dictionary creation and ', ...
+        'attachment will continue normally.'];
+end
+
+answer = questdlg(message, 'Diagnostic audit', 'Confirm', 'Cancel', 'Cancel');
+if strcmp(answer, 'Confirm')
+    state.RunUnusedAudit = requestedValue;
+else
+    if previousValue
+        diagnosticSwitch.Value = 'On';
+    else
+        diagnosticSwitch.Value = 'Off';
+    end
+end
+end
+
 function openOutputFile(~, ~)
 if isempty(state.ExtractOutput)
     return;
@@ -2126,7 +2197,7 @@ function showQuickTutorial(appFigure)
 %   The user can skip the entire tutorial at any step.
 
     steps = {
-        ['Welcome to Simulink Team Tools!\n\n', ...
+        ['Welcome to MODEL INEGRATION TOOL!\n\n', ...
          'This tool helps you:\n', ...
          '  1. Build a parent Simulink model from multiple referenced child models\n', ...
          '  2. Manage Unit Delays to resolve algebraic loops\n', ...
@@ -2139,7 +2210,7 @@ function showQuickTutorial(appFigure)
          '     - You can also import an ordered list from Excel ("Import Excel...")\n', ...
          '     - Use the search box to filter models by name\n', ...
          '  3. Enter a name for the generated parent model\n', ...
-         '  4. Click "Preview" to validate compatibility and see the wiring plan\n', ...
+         '  4. Click "Preview" to validate compatibility and see the Connections plan\n', ...
          '  5. Click "Generate" to create the parent model\n\n', ...
          'Tip: The order of models in the selected list determines the block layout.']
         
@@ -2177,8 +2248,7 @@ function showQuickTutorial(appFigure)
          '  1. Select a Subsystem block in Simulink\n', ...
          '  2. Choose which ports to process (Inports, Outports, or both)\n', ...
          '  3. Click "Configure Signals" to create Simulink.Signal objects\n\n', ...
-         'This is useful for setting up signal properties like data types,\n', ...
-         'dimensions, and sample times on subsystem boundaries.']
+         'Tip: This helps with signal resolving and propagation to the generated model.']
         
         ['You are all set!\n\n', ...
          'Key things to remember:\n', ...

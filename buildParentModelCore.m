@@ -755,7 +755,7 @@ try
                     delayParams = [{'SampleTime', '-1'}, delayParams];
 %                     end
                     
-                    add_block('built-in/UnitDelay', [containerSystem '/' delayName], delayParams{:});
+                    add_block('built-in/UnitDelay',[containerSystem '/' delayName], delayParams{:});
                     
                     if colorBlocks && srcModelIdx > 0
                         set_param([containerSystem '/' delayName], 'BackgroundColor', paletteColor(srcModelIdx));
@@ -905,7 +905,7 @@ try
                     delayParams = [{'SampleTime', '-1'}, delayParams];
                 end
                 
-                add_block('built-in/UnitDelay', [containerSystem '/' dName], delayParams{:});
+                add_block('built-in/UnitDelay', [containerSystem '/' dName],'SampleTime', '-1', delayParams{:});
                 dPorts = get_param([containerSystem '/' dName], 'PortHandles');
                 addLineRouted(containerSystem, routeMode, srcH, dPorts.Inport(1));
                 addLineRouted(containerSystem, routeMode, dPorts.Outport(1), dstH);

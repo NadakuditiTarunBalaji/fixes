@@ -28,7 +28,7 @@ connections = struct( ...
     'SrcPortIndex', {}, 'SrcPortName', {}, ...
     'DstBlock', {}, 'DstBlockPath', {}, 'DstPortIndex', {}, 'DstPortName', {}, ...
     'Label', {}, 'Kind', {}, 'Tag', {}, ...
-    'GotoBlockPath', {}, 'FromBlockPath', {}, 'AlreadyDelayed', {});
+    'GotoBlockPath', {}, 'FromBlockPath', {}, 'AlreadyDelayed', {}, 'DelayNames', {});
 
 stage = 'starting';
 try
@@ -107,10 +107,11 @@ try
 
     pendingGotos = struct('SrcBlock', {}, 'SrcBlockPath', {}, ...
         'SrcPortIndex', {}, 'SrcPortName', {}, ...
-        'GotoBlockPath', {}, 'Tag', {}, 'AlreadyDelayed', {});
+        'GotoBlockPath', {}, 'Tag', {}, 'AlreadyDelayed', {}, 'DelayNames', {});
     pendingFroms = struct('FromBlockPath', {}, 'Tag', {}, ...
         'DstBlock', {}, 'DstBlockPath', {}, ...
-        'DstPortIndex', {}, 'DstPortName', {}, 'AlreadyDelayed', {});
+        'DstPortIndex', {}, 'DstPortName', {}, ...
+        'AlreadyDelayed', {}, 'DelayNames', {});
 
     stage = 'tracing signal lines';
     for sourceIndex = 1:numel(modelBlocks)
@@ -139,7 +140,7 @@ try
                 end
                 dstPortHandle = dstPortHandle(1);
 
-                [finalPorts, sawDelay] = expandThroughDelays( ...
+                [finalPorts, sawDelay, delayNames] = expandThroughDelays( ...
                     dstPortHandle, delayInportHandles, delayOutportHandles);
                 if isempty(finalPorts)
                     continue;
@@ -158,7 +159,8 @@ try
                                 'SrcPortName',    resolvePortName(srcPath, outputIndex, 'out'), ...
                                 'GotoBlockPath',  gotoPaths{gotoIndex}, ...
                                 'Tag',            gotoTags{gotoIndex}, ...
-                                'AlreadyDelayed', sawDelay); %#ok<AGROW>
+                                'AlreadyDelayed', sawDelay, ...
+                                'DelayNames',     {delayNames}); %#ok<AGROW>
                         end
                         continue;
                     end
@@ -196,7 +198,8 @@ try
                             'Tag',           '', ...
                             'GotoBlockPath', '', ...
                             'FromBlockPath', '', ...
-                            'AlreadyDelayed', sawDelay); %#ok<AGROW>
+                            'AlreadyDelayed', sawDelay, ...
+                            'DelayNames',    {delayNames}); %#ok<AGROW>
                     end
                 end
             end
@@ -224,7 +227,7 @@ try
             end
             dstPortHandle = dstPortHandle(1);
 
-            [finalPorts, sawDelay] = expandThroughDelays( ...
+            [finalPorts, sawDelay, delayNames] = expandThroughDelays( ...
                 dstPortHandle, delayInportHandles, delayOutportHandles);
 
             for finalIndex = 1:numel(finalPorts)
@@ -247,7 +250,8 @@ try
                     'DstBlockPath',  destBlock, ...
                     'DstPortIndex',  dstPortIndex, ...
                     'DstPortName',   resolvePortName(destBlock, dstPortIndex, 'in'), ...
-                    'AlreadyDelayed', sawDelay); %#ok<AGROW>
+                    'AlreadyDelayed', sawDelay, ...
+                    'DelayNames',     {delayNames}); %#ok<AGROW>
             end
         end
     end
@@ -271,6 +275,7 @@ try
         gotoEntry = pendingGotos(matchIndexes(1));
         fromEntry = pendingFroms(pendingIndex);
         pathIsDelayed = gotoEntry.AlreadyDelayed || fromEntry.AlreadyDelayed;
+        delayNames = unique([gotoEntry.DelayNames(:); fromEntry.DelayNames(:)], 'stable');
 
         if isempty(gotoEntry.SrcPortName), srcPortLabel = num2str(gotoEntry.SrcPortIndex); else, srcPortLabel = gotoEntry.SrcPortName; end
         if isempty(fromEntry.DstPortName), dstPortLabel = num2str(fromEntry.DstPortIndex); else, dstPortLabel = fromEntry.DstPortName; end
@@ -295,7 +300,8 @@ try
                 'Tag',           gotoEntry.Tag, ...
                 'GotoBlockPath', gotoEntry.GotoBlockPath, ...
                 'FromBlockPath', fromEntry.FromBlockPath, ...
-                'AlreadyDelayed', pathIsDelayed); %#ok<AGROW>
+                'AlreadyDelayed', pathIsDelayed, ...
+                'DelayNames',    {delayNames}); %#ok<AGROW>
             stats.FromGotoConnections = stats.FromGotoConnections + 1;
         end
     end
@@ -340,19 +346,23 @@ else
 end
 end
 
-function [finalPorts, sawDelay] = expandThroughDelays(portHandle, delayInportHandles, delayOutportHandles, depth)
+function [finalPorts, sawDelay, delayNames] = expandThroughDelays(portHandle, delayInportHandles, delayOutportHandles, depth)
 if nargin < 4, depth = 0; end
 if depth > 8
     finalPorts = [];
     sawDelay = true;
+    delayNames = {};
     return;
 end
 
 finalPorts = portHandle;
 sawDelay = false;
+delayNames = {};
 delayIndex = find(delayInportHandles == portHandle, 1);
 if isempty(delayIndex), return; end
 sawDelay = true;
+delayBlockPath = get_param(delayInportHandles(delayIndex), 'Parent');
+delayNames = {char(get_param(delayBlockPath, 'Name'))};
 
 outLine = get_param(delayOutportHandles(delayIndex), 'Line');
 if ~isnumeric(outLine) || isempty(outLine) || any(outLine(:) == -1)
@@ -374,10 +384,11 @@ for lineIndex = 1:numel(lineHandles)
         continue;
     end
     for portIndex = 1:numel(dstPortHandle)
-        [subPorts, subDelay] = expandThroughDelays( ...
+        [subPorts, subDelay, subDelayNames] = expandThroughDelays( ...
             dstPortHandle(portIndex), delayInportHandles, delayOutportHandles, depth + 1);
         finalPorts = [finalPorts, subPorts(:)']; %#ok<AGROW>
         sawDelay = sawDelay || subDelay;
+        delayNames = unique([delayNames(:); subDelayNames(:)], 'stable');
     end
 end
 end
