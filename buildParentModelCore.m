@@ -905,7 +905,7 @@ try
                     delayParams = [{'SampleTime', '-1'}, delayParams];
                 end
                 
-                add_block('built-in/UnitDelay', [containerSystem '/' dName],'SampleTime', '-1', delayParams{:});
+                add_block('built-in/UnitDelay', [containerSystem '/' dName],'SampleTime', '-1','Orientation', 'left',  delayParams{:});
                 dPorts = get_param([containerSystem '/' dName], 'PortHandles');
                 addLineRouted(containerSystem, routeMode, srcH, dPorts.Inport(1));
                 addLineRouted(containerSystem, routeMode, dPorts.Outport(1), dstH);

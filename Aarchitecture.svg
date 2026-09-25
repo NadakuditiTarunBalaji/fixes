@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#64748B"/></marker>
+    <style>
+      .box{rx:6;ry:6;stroke:#CBD5E1;stroke-width:1.2;fill:#F8FAFC}
+      .box-engine{fill:#EFF6FF;stroke:#93C5FD}
+      .box-gui{fill:#FEF3C7;stroke:#FCD34D}
+      .label{font-weight:600;fill:#1E293B;font-size:13px}
+      .sublabel{fill:#64748B;font-size:11px}
+      .conn{stroke:#64748B;stroke-width:1.2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+
+  <!-- GUI Layer -->
+  <rect class="box box-gui" x="300" y="20" width="300" height="60"/>
+  <text class="label" x="450" y="48" text-anchor="middle">MBD_Integration.m</text>
+  <text class="sublabel" x="450" y="64" text-anchor="middle">GUI Layer (uifigure, callbacks, state)</text>
+
+  <!-- Tab labels -->
+  <text class="sublabel" x="120" y="130" text-anchor="middle">Tab 1: Build</text>
+  <text class="sublabel" x="450" y="130" text-anchor="middle">Tab 2: Delays</text>
+  <text class="sublabel" x="780" y="130" text-anchor="middle">Tab 3: Extract</text>
+
+  <!-- Tab 1 Engines -->
+  <rect class="box box-engine" x="20" y="150" width="200" height="44"/>
+  <text class="label" x="120" y="176" text-anchor="middle">validateModelCompatibility</text>
+
+  <rect class="box box-engine" x="20" y="210" width="200" height="44"/>
+  <text class="label" x="120" y="236" text-anchor="middle">buildParentModelCore</text>
+
+  <rect class="box box-engine" x="20" y="270" width="200" height="44"/>
+  <text class="label" x="120" y="296" text-anchor="middle">configureSubsystemSignals</text>
+
+  <rect class="box" x="20" y="330" width="200" height="44"/>
+  <text class="label" x="120" y="350" text-anchor="middle" style="fill:#94A3B8">arrangeModelLayout</text>
+  <text class="sublabel" x="120" y="366" text-anchor="middle">(standalone, not called by GUI)</text>
+
+  <!-- Tab 2 Engines -->
+  <rect class="box box-engine" x="350" y="150" width="200" height="44"/>
+  <text class="label" x="450" y="176" text-anchor="middle">listModelConnections</text>
+
+  <rect class="box box-engine" x="350" y="210" width="200" height="44"/>
+  <text class="label" x="450" y="236" text-anchor="middle">insertUnitDelayOnBranch</text>
+
+  <!-- Tab 3 Engines -->
+  <rect class="box box-engine" x="680" y="150" width="200" height="44"/>
+  <text class="label" x="780" y="176" text-anchor="middle">extractAttributesCore</text>
+
+  <rect class="box box-engine" x="680" y="210" width="200" height="44"/>
+  <text class="label" x="780" y="236" text-anchor="middle">replaceStorageClass</text>
+
+  <rect class="box box-engine" x="680" y="270" width="200" height="44"/>
+  <text class="label" x="780" y="296" text-anchor="middle">convert_m_to_sldd</text>
+
+  <!-- Simulink API -->
+  <rect class="box" x="250" y="430" width="400" height="50" style="fill:#F0FDF4;stroke:#86EFAC"/>
+  <text class="label" x="450" y="456" text-anchor="middle" style="fill:#166534">Simulink API</text>
+  <text class="sublabel" x="450" y="472" text-anchor="middle">load_system, new_system, add_block, set_param, find_system, save_system</text>
+
+  <!-- Connections: GUI to engines -->
+  <path class="conn" d="M350,80 L120,150"/>
+  <path class="conn" d="M380,80 L120,210"/>
+  <path class="conn" d="M400,80 L120,270"/>
+  <path class="conn" d="M450,80 L450,150"/>
+  <path class="conn" d="M450,80 L450,210"/>
+  <path class="conn" d="M530,80 L780,150"/>
+  <path class="conn" d="M530,80 L780,210"/>
+  <path class="conn" d="M540,80 L780,270"/>
+
+  <!-- Connections: Engines to Simulink -->
+  <path class="conn" d="M120,254 L350,430"/>
+  <path class="conn" d="M120,314 L380,430"/>
+  <path class="conn" d="M450,254 L450,430"/>
+  <path class="conn" d="M780,194 L550,430"/>
+  <path class="conn" d="M780,314 L560,430"/>
+  <path class="conn" d="M120,194 L340,430"/>
+
+  <!-- File System -->
+  <rect class="box" x="20" y="430" width="180" height="50" style="fill:#FFF7ED;stroke:#FDBA74"/>
+  <text class="label" x="110" y="452" text-anchor="middle" style="fill:#9A3412">File System</text>
+  <text class="sublabel" x="110" y="468" text-anchor="middle">.slx, .m, .sldd, .bak, log.txt</text>
+
+  <path class="conn" d="M120,254 L110,430"/>
+  <path class="conn" d="M780,194 L200,445" style="stroke-dasharray:4,3"/>
+
+  <rect class="box" x="700" y="430" width="180" height="50" style="fill:#FFF7ED;stroke:#FDBA74"/>
+  <text class="label" x="790" y="452" text-anchor="middle" style="fill:#9A3412">MATLAB Workspace</text>
+  <text class="sublabel" x="790" y="468" text-anchor="middle">evalin('base', ...), slResolve</text>
+  <path class="conn" d="M780,314 L790,430"/>
+</svg>

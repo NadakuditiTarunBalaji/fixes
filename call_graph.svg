@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 600" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="11">
+  <defs>
+    <marker id="arr" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><path d="M0,0 L7,2.5 L0,5" fill="#64748B"/></marker>
+    <style>
+      .n{rx:5;ry:5;stroke:#CBD5E1;stroke-width:1;fill:#F8FAFC}
+      .n-gui{fill:#FEF3C7;stroke:#FCD34D}
+      .n-eng{fill:#EFF6FF;stroke:#93C5FD}
+      .n-hlp{fill:#F0FDF4;stroke:#86EFAC}
+      .t{font-weight:600;fill:#1E293B;font-size:11px}
+      .e{stroke:#94A3B8;stroke-width:1;fill:none;marker-end:url(#arr)}
+    </style>
+  </defs>
+
+  <!-- GUI Callbacks (Row 1) -->
+  <rect class="n n-gui" x="10" y="10" width="130" height="30"/><text class="t" x="75" y="30" text-anchor="middle">doPreview</text>
+  <rect class="n n-gui" x="150" y="10" width="130" height="30"/><text class="t" x="215" y="30" text-anchor="middle">doGenerate</text>
+  <rect class="n n-gui" x="290" y="10" width="130" height="30"/><text class="t" x="355" y="30" text-anchor="middle">refreshConnections</text>
+  <rect class="n n-gui" x="430" y="10" width="130" height="30"/><text class="t" x="495" y="30" text-anchor="middle">insertDelay</text>
+  <rect class="n n-gui" x="570" y="10" width="110" height="30"/><text class="t" x="625" y="30" text-anchor="middle">doExtract</text>
+  <rect class="n n-gui" x="690" y="10" width="160" height="30"/><text class="t" x="770" y="30" text-anchor="middle">applyStorageClass</text>
+  <rect class="n n-gui" x="10" y="50" width="160" height="30"/><text class="t" x="90" y="70" text-anchor="middle">generateSldd</text>
+  <rect class="n n-gui" x="180" y="50" width="160" height="30"/><text class="t" x="260" y="70" text-anchor="middle">doConfigureSignals</text>
+
+  <!-- Engine Functions (Row 2) -->
+  <rect class="n n-eng" x="10" y="140" width="190" height="30"/><text class="t" x="105" y="160" text-anchor="middle">validateModelCompatibility</text>
+  <rect class="n n-eng" x="210" y="140" width="170" height="30"/><text class="t" x="295" y="160" text-anchor="middle">buildParentModelCore</text>
+  <rect class="n n-eng" x="390" y="140" width="160" height="30"/><text class="t" x="470" y="160" text-anchor="middle">listModelConnections</text>
+  <rect class="n n-eng" x="560" y="140" width="170" height="30"/><text class="t" x="645" y="160" text-anchor="middle">insertUnitDelayOnBranch</text>
+  <rect class="n n-eng" x="10" y="200" width="160" height="30"/><text class="t" x="90" y="220" text-anchor="middle">extractAttributesCore</text>
+  <rect class="n n-eng" x="180" y="200" width="150" height="30"/><text class="t" x="255" y="220" text-anchor="middle">replaceStorageClass</text>
+  <rect class="n n-eng" x="340" y="200" width="155" height="30"/><text class="t" x="417" y="220" text-anchor="middle">convert_m_to_sldd</text>
+  <rect class="n n-eng" x="505" y="200" width="195" height="30"/><text class="t" x="602" y="220" text-anchor="middle">configureSubsystemSignals</text>
+
+  <!-- Helper Functions (Row 3) -->
+  <rect class="n n-hlp" x="10" y="300" width="140" height="28"/><text class="t" x="80" y="318" text-anchor="middle">computeGCD</text>
+  <rect class="n n-hlp" x="160" y="300" width="140" height="28"/><text class="t" x="230" y="318" text-anchor="middle">discoverModelFiles</text>
+  <rect class="n n-hlp" x="310" y="300" width="140" height="28"/><text class="t" x="380" y="318" text-anchor="middle">getRootPortNames</text>
+  <rect class="n n-hlp" x="460" y="300" width="180" height="28"/><text class="t" x="550" y="318" text-anchor="middle">collectSampleTimeChanges</text>
+  <rect class="n n-hlp" x="650" y="300" width="170" height="28"/><text class="t" x="735" y="318" text-anchor="middle">expandThroughDelays</text>
+  <rect class="n n-hlp" x="10" y="340" width="170" height="28"/><text class="t" x="95" y="358" text-anchor="middle">isBackwardConnection</text>
+  <rect class="n n-hlp" x="190" y="340" width="140" height="28"/><text class="t" x="260" y="358" text-anchor="middle">isCollision</text>
+  <rect class="n n-hlp" x="340" y="340" width="160" height="28"/><text class="t" x="420" y="358" text-anchor="middle">makeUniqueBlockName</text>
+  <rect class="n n-hlp" x="510" y="340" width="150" height="28"/><text class="t" x="585" y="358" text-anchor="middle">ensureSignalObject</text>
+  <rect class="n n-hlp" x="670" y="340" width="150" height="28"/><text class="t" x="745" y="358" text-anchor="middle">runExtraction</text>
+
+  <!-- GUI → Engine edges -->
+  <path class="e" d="M75,40 L105,140"/>
+  <path class="e" d="M75,40 L295,140"/>
+  <path class="e" d="M215,40 L295,140"/>
+  <path class="e" d="M355,40 L470,140"/>
+  <path class="e" d="M495,40 L645,140"/>
+  <path class="e" d="M625,40 L90,200"/>
+  <path class="e" d="M770,40 L255,200"/>
+  <path class="e" d="M90,80 L417,200"/>
+  <path class="e" d="M260,80 L602,200"/>
+
+  <!-- Engine → Helper edges -->
+  <path class="e" d="M105,170 L80,300"/>
+  <path class="e" d="M295,170 L230,300"/>
+  <path class="e" d="M295,170 L380,300"/>
+  <path class="e" d="M295,170 L550,300"/>
+  <path class="e" d="M295,170 L420,340"/>
+  <path class="e" d="M470,170 L735,300"/>
+  <path class="e" d="M470,170 L95,340"/>
+  <path class="e" d="M645,170 L260,340"/>
+  <path class="e" d="M90,230 L745,340"/>
+  <path class="e" d="M602,230 L585,340"/>
+</svg>

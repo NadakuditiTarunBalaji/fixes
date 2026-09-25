@@ -337,17 +337,56 @@ function convert_m_to_sldd(varargin)
         % ==== Stage 5: Cleanup base workspace ====
         clearMVarsFromBase(pre);
 
+        % if opt.runUnusedAudit
+        %     unusedVars = Simulink.findVars(modelName, 'FindUsedVars', 'off', 'SourceType', 'data dictionary');
+
+        %     if ~isempty(unusedVars)
+        %         for varIdx=1:length(unusedVars)
+        %             if ~strcmp(unusedVars(varIdx,1).Name,'ertConfig')
+        %                 fprintf(2,'    Unused Variable "%s" present in "%s" \n', unusedVars(varIdx,1).Name, unusedVars(varIdx,1).Source);
+        %             end
+        %         end
+        %     end
+        % end
         if opt.runUnusedAudit
-            unusedVars = Simulink.findVars(modelName, 'FindUsedVars', 'off', 'SourceType', 'data dictionary');
+            unusedVars = Simulink.findVars(modelName, 'FindUsedVars', 'off', 'SourceType', 'data dictionary')
 
             if ~isempty(unusedVars)
-                for varIdx=1:length(unusedVars)
-                    if ~strcmp(unusedVars(varIdx,1).Name,'ertConfig')
-                        fprintf(2,'    Unused Variable "%s" present in "%s" \n', unusedVars(varIdx,1).Name, unusedVars(varIdx,1).Source);
+
+                % Create output file dynamically using modelName
+                outputFile = sprintf('%s_unused_labels.txt', modelName);
+
+                % Open file for writing
+                fileID = fopen(outputFile, 'w');
+
+                if fileID == -1
+                    error('Could not create file: %s', outputFile);
+                end
+
+                % Make sure the file is closed even if an error occurs
+                cleanupObj = onCleanup(@() fclose(fileID));
+
+                for varIdx = 1:length(unusedVars)
+
+                    if ~strcmp(unusedVars(varIdx,1).Name, 'ertConfig')
+
+                        % Same message on Command Window
+                        fprintf(2, '    Unused Variable "%s" present in "%s" \n', ...
+                            unusedVars(varIdx,1).Name, ...
+                            unusedVars(varIdx,1).Source);
+
+                        % Write the same message to the text file
+                        fprintf(fileID, ...
+                            '    Unused Variable "%s" present in "%s"\n', ...
+                            unusedVars(varIdx,1).Name, ...
+                            unusedVars(varIdx,1).Source);
                     end
                 end
             end
         end
+
+
+
         reportProgress(opt, idx / numel(mfiles), sprintf('Completed model %s.', modelName));
     end
         

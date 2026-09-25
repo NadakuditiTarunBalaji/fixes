@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SRM Model Integration Tool — Technical Documentation</title>
+<style>
+:root{
+  --c-primary:#1E3A5F;
+  --c-accent:#E8913A;
+  --c-bg:#FFFFFF;
+  --c-surface:#F8FAFC;
+  --c-border:#E2E8F0;
+  --c-text:#334155;
+  --c-text-muted:#64748B;
+  --c-code-bg:#0F172A;
+  --c-success:#059669;
+  --c-warn:#D97706;
+  --c-error:#DC2626;
+  --sidebar-w:270px;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--font-sans);color:var(--c-text);background:var(--c-bg);line-height:1.65;display:flex;min-height:100vh}
+
+/* ====== Sidebar ====== */
+.sidebar{width:var(--sidebar-w);background:var(--c-surface);border-right:1px solid var(--c-border);position:fixed;top:0;bottom:0;left:0;display:flex;flex-direction:column;z-index:200;overflow:hidden}
+.sidebar-hdr{padding:18px 16px;background:var(--c-primary);color:#fff}
+.sidebar-hdr h2{font-size:14px;letter-spacing:.6px;text-transform:uppercase;font-weight:700}
+.sidebar-hdr p{font-size:11px;opacity:.75;margin-top:2px}
+.sidebar-search{padding:10px 12px;border-bottom:1px solid var(--c-border)}
+.sidebar-search input{width:100%;padding:7px 10px;border:1px solid var(--c-border);border-radius:4px;font-size:13px;outline:none}
+.sidebar-search input:focus{border-color:var(--c-primary)}
+.sidebar-nav{flex:1;overflow-y:auto;padding:8px 0}
+.nav-group{padding:10px 16px 2px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--c-text-muted)}
+.nav-link{display:block;padding:6px 16px 6px 22px;font-size:13px;color:var(--c-text);text-decoration:none;border-left:3px solid transparent;transition:all .12s}
+.nav-link:hover{background:#E2E8F0;color:var(--c-primary)}
+.nav-link.active{background:#EEF2F6;color:var(--c-primary);border-left-color:var(--c-accent);font-weight:600}
+.nav-link.sub{padding-left:34px;font-size:12px}
+
+/* ====== Main ====== */
+.main{margin-left:var(--sidebar-w);flex:1;padding:36px 44px 80px;max-width:1100px}
+h1{font-size:28px;font-weight:700;color:var(--c-primary);border-bottom:2px solid var(--c-border);padding-bottom:10px;margin-bottom:28px}
+h2{font-size:22px;font-weight:700;color:#1E293B;border-bottom:1px solid var(--c-border);padding-bottom:6px;margin:38px 0 18px}
+h3{font-size:17px;font-weight:600;margin:22px 0 10px;color:#1E293B}
+h4{font-size:14px;font-weight:600;margin:14px 0 6px}
+p,li{margin-bottom:10px}
+ul,ol{padding-left:22px;margin-bottom:14px}
+strong{color:#1E293B}
+
+/* ====== Tables ====== */
+table{width:100%;border-collapse:collapse;margin-bottom:22px;font-size:13px}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--c-border);vertical-align:top}
+th{background:var(--c-surface);font-weight:600;white-space:nowrap}
+tr:hover{background:#F8FAFC}
+
+/* ====== Code ====== */
+pre{background:var(--c-code-bg);color:#E2E8F0;padding:16px;border-radius:6px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;margin-bottom:18px;position:relative;line-height:1.55}
+code{font-family:var(--font-mono);font-size:12.5px;background:var(--c-surface);color:#1E293B;padding:1px 5px;border-radius:3px}
+pre code{background:transparent;padding:0;color:inherit}
+.copy-btn{position:absolute;top:8px;right:8px;background:#334155;color:#E2E8F0;border:none;padding:3px 7px;border-radius:3px;cursor:pointer;font-size:10px}
+.copy-btn:hover{background:#475569}
+
+/* ====== Callouts ====== */
+.callout{padding:14px 18px;border-left:4px solid var(--c-border);background:var(--c-surface);border-radius:0 6px 6px 0;margin-bottom:20px;font-size:14px}
+.callout-info{border-left-color:var(--c-primary);background:#EFF6FF}
+.callout-warn{border-left-color:var(--c-warn);background:#FFFBEB;color:#92400E}
+.callout-warn strong{color:#92400E}
+.callout-danger{border-left-color:var(--c-error);background:#FEF2F2;color:#991B1B}
+.callout-danger strong{color:#991B1B}
+
+/* ====== Source ref badges ====== */
+.src-ref{display:inline-block;font-size:11px;background:#EEF2F6;border:1px solid var(--c-border);padding:2px 8px;border-radius:3px;font-family:var(--font-mono);color:var(--c-text-muted);margin:4px 0 10px}
+
+/* ====== Collapsible ====== */
+.collapse{border:1px solid var(--c-border);border-radius:6px;margin-bottom:10px;overflow:hidden}
+.collapse-hdr{padding:12px 16px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--c-surface);user-select:none;font-size:14px;transition:background .15s}
+.collapse-hdr:hover{background:#EDF2F7}
+.collapse-body{display:none;padding:16px;border-top:1px solid var(--c-border);background:#fff}
+.collapse.open .collapse-body{display:block}
+.collapse .arrow{transition:transform .2s;font-size:11px}
+.collapse.open .arrow{transform:rotate(90deg)}
+
+/* ====== Screenshot placeholders ====== */
+.img-placeholder{border:2px dashed var(--c-border);background:var(--c-surface);border-radius:8px;padding:32px;text-align:center;margin-bottom:22px}
+.img-placeholder .icon{font-size:36px;margin-bottom:6px}
+.img-placeholder h4{margin-bottom:4px}
+.img-placeholder p{font-size:12px;color:var(--c-text-muted)}
+
+/* ====== Diagram container ====== */
+.diagram-container{border:1px solid var(--c-border);border-radius:8px;overflow:hidden;margin-bottom:24px;background:#fff}
+.diagram-container img{width:100%;height:auto;display:block}
+.diagram-caption{padding:8px 14px;font-size:12px;color:var(--c-text-muted);border-top:1px solid var(--c-border);background:var(--c-surface)}
+
+/* ====== Responsive ====== */
+@media(max-width:900px){
+  .sidebar{display:none}
+  .main{margin-left:0;padding:20px}
+}
+</style>
+</head>
+<body>
+
+<!-- ================================================================ -->
+<!--  SIDEBAR                                                         -->
+<!-- ================================================================ -->
+<aside class="sidebar">
+  <div class="sidebar-hdr">
+    <h2>SRM Model Integration Tool</h2>
+    <p>Technical Documentation</p>
+  </div>
+  <div class="sidebar-search">
+    <input type="text" id="sidebarSearch" placeholder="Search documentation...">
+  </div>
+  <nav class="sidebar-nav" id="sidebarNav">
+
+    <div class="nav-group">Introduction</div>
+    <a href="#sec-overview" class="nav-link">1. Application Overview</a>
+    <a href="#sec-quick" class="nav-link">2. Quick Understanding</a>
+    <a href="#sec-entry" class="nav-link">3. Entry Point</a>
+
+    <div class="nav-group">Execution</div>
+    <a href="#sec-flow" class="nav-link">4. Complete Execution Flow</a>
+    <a href="#sec-flow-tab1" class="nav-link sub">Tab 1 Flow</a>
+    <a href="#sec-flow-tab2" class="nav-link sub">Tab 2 Flow</a>
+    <a href="#sec-flow-tab3" class="nav-link sub">Tab 3 Flow</a>
+
+    <div class="nav-group">Source Files</div>
+    <a href="#sec-files" class="nav-link">5. File-by-File</a>
+    <a href="#file-mbd" class="nav-link sub">MBD_Integration.m</a>
+    <a href="#file-build" class="nav-link sub">buildParentModelCore.m</a>
+    <a href="#file-validate" class="nav-link sub">validateModelCompatibility.m</a>
+    <a href="#file-extract" class="nav-link sub">extractAttributesCore.m</a>
+    <a href="#file-sldd" class="nav-link sub">convert_m_to_sldd.m</a>
+    <a href="#file-storage" class="nav-link sub">replaceStorageClass.m</a>
+    <a href="#file-list" class="nav-link sub">listModelConnections.m</a>
+    <a href="#file-insert" class="nav-link sub">insertUnitDelayOnBranch.m</a>
+    <a href="#file-configure" class="nav-link sub">configureSubsystemSignals.m</a>
+
+    <div class="nav-group">Functions</div>
+    <a href="#sec-functions" class="nav-link">6. Function Reference</a>
+
+    <div class="nav-group">Analysis</div>
+    <a href="#sec-dataflow" class="nav-link">8. Data Flow</a>
+    <a href="#sec-controlflow" class="nav-link">9. Control Flow</a>
+    <a href="#sec-algorithms" class="nav-link">10. Algorithms</a>
+    <a href="#sec-inputs" class="nav-link">11. Inputs</a>
+    <a href="#sec-outputs" class="nav-link">12. Outputs</a>
+    <a href="#sec-deps" class="nav-link">13. Dependencies</a>
+    <a href="#sec-fileops" class="nav-link">14. File Operations</a>
+    <a href="#sec-errors" class="nav-link">15. Error Handling</a>
+    <a href="#sec-config" class="nav-link">16. Configuration</a>
+    <a href="#sec-ui" class="nav-link">17. User Interface</a>
+
+    <div class="nav-group">Reference</div>
+    <a href="#sec-arch" class="nav-link">19. Architecture</a>
+    <a href="#sec-diagrams" class="nav-link">20–23. Diagrams</a>
+    <a href="#sec-screenshots" class="nav-link">24. Screenshots</a>
+    <a href="#sec-simple" class="nav-link">25. Simple Explanation</a>
+    <a href="#sec-techref" class="nav-link">26. Technical Reference</a>
+    <a href="#sec-unknown" class="nav-link">Unknown Information</a>
+    <a href="#sec-troubleshoot" class="nav-link">Troubleshooting</a>
+  </nav>
+</aside>
+
+<!-- ================================================================ -->
+<!--  MAIN CONTENT                                                    -->
+<!-- ================================================================ -->
+<main class="main">
+
+<!-- ================================================================ -->
+<!--  1. APPLICATION OVERVIEW                                         -->
+<!-- ================================================================ -->
+<section id="sec-overview">
+<h1>1. Application Overview</h1>
+
+<p>The SRM Model Integration Tool is a MATLAB application that builds a graphical user interface (a GUI — the visible window a user interacts with). The GUI lets the user perform three jobs that all relate to Simulink model integration:</p>
+
+<ol>
+<li><strong>Build a Parent Model</strong> — take many separate Simulink child model files (<code>.slx</code> or <code>.mdl</code>), place them inside one new parent model as Model Reference blocks, and wire all their input and output ports together automatically.</li>
+<li><strong>Insert Unit Delays</strong> — scan a generated model for backward-routing signal connections (feedback loops), display them in a list, and let the user insert a <code>Unit Delay</code> block on any selected connection to break the algebraic loop.</li>
+<li><strong>Extract Attributes</strong> — read port names from a selected Simulink subsystem, search a folder of <code>.m</code> files for variable assignments that match those port names, write the matches to an output <code>.m</code> file, optionally update StorageClass values, and optionally convert the output into Simulink Data Dictionary (<code>.sldd</code>) files.</li>
+</ol>
+
+<h3>What starts the application</h3>
+<p>The user types <code>MBD_Integration</code> in the MATLAB Command Window. This calls the function <code>MBD_Integration()</code> defined in <code>MBD_Integration.m</code>. The function creates a <code>uifigure</code> window and populates it with tabs, buttons, text fields, and other controls. No arguments are required.</p>
+
+<h3>What the final outputs are</h3>
+<ul>
+<li>A new Simulink model file (<code>.slx</code>) containing Model Reference blocks wired together.</li>
+<li>A <code>log.txt</code> file recording the session console output.</li>
+<li>A generated <code>.m</code> data script containing extracted variable attribute assignments.</li>
+<li>Up to three <code>.sldd</code> Simulink Data Dictionary files per processed model.</li>
+<li>Backup files (<code>.bak</code>) created before any file is overwritten.</li>
+</ul>
+
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; function <code>MBD_Integration()</code></div>
+</section>
+
+<!-- ================================================================ -->
+<!--  2. QUICK UNDERSTANDING                                         -->
+<!-- ================================================================ -->
+<section id="sec-quick">
+<h2>2. Quick Understanding</h2>
+
+<p>This section explains the application in less than five minutes.</p>
+<ol>
+<li>The user runs <code>MBD_Integration</code>. A window opens with three tabs.</li>
+<li>In <strong>Tab 1</strong>, the user picks a folder containing Simulink model files. The tool scans the folder, lists every model it finds, and lets the user pick which models to include and in what order.</li>
+<li>The user clicks <strong>Preview</strong>. The tool loads every chosen model, checks if their solver settings and sample times are compatible, and shows a report listing every planned connection.</li>
+<li>If Preview passes, the user clicks <strong>Generate</strong>. The tool creates a new Simulink model, places a Model Reference block for each child model, and connects matching ports using either virtual <code>From/Goto</code> tags or physical signal lines. It can also automatically insert Unit Delay blocks on feedback paths.</li>
+<li>In <strong>Tab 2</strong>, the user can inspect the generated model for remaining backward connections and manually insert Unit Delay blocks on selected connections.</li>
+<li>In <strong>Tab 3</strong>, the user selects a subsystem in Simulink, presses Refresh, picks a source folder of <code>.m</code> files, and clicks Extract. The tool scans those files for variable definitions matching port names and writes an output script. The user can then update StorageClass values and generate <code>.sldd</code> data dictionaries linked to the model.</li>
+<li>All actions are logged in a text area inside each tab and simultaneously written to <code>log.txt</code> via the MATLAB <code>diary</code> command.</li>
+</ol>
+</section>
+
+<!-- ================================================================ -->
+<!--  3. APPLICATION ENTRY POINT                                      -->
+<!-- ================================================================ -->
+<section id="sec-entry">
+<h2>3. Application Entry Point</h2>
+
+<h3>Starting file</h3>
+<p><code>MBD_Integration.m</code> — this file defines a single function named <code>MBD_Integration()</code>. It takes no input arguments and produces no output arguments.</p>
+
+<h3>Type</h3>
+<p>Function (not a script, not a class).</p>
+
+<h3>What happens first</h3>
+<p>The following initialization steps execute in order:</p>
+
+<table>
+<thead><tr><th>Order</th><th>Action</th><th>Code Reference</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Determine the folder containing <code>MBD_Integration.m</code> itself and add it to the MATLAB path with <code>addpath</code>.</td><td><code>appFolder = fileparts(mfilename('fullpath')); addpath(appFolder);</code></td></tr>
+<tr><td>2</td><td>Delete all saved MATLAB preferences under the group <code>'MBD_Integration'</code> using <code>rmpref</code>.</td><td><code>rmpref('MBD_Integration');</code></td></tr>
+<tr><td>3</td><td>Check whether <code>log.txt</code> exists in the current working directory. The result is stored in <code>isReturningUser</code>.</td><td><code>isReturningUser = isfile(logPath);</code></td></tr>
+<tr><td>4</td><td>Save the current diary state. Delete any existing <code>log.txt</code>, create a new one, and start the MATLAB <code>diary</code> to redirect command window output to <code>log.txt</code>.</td><td><code>diary(logPath);</code></td></tr>
+<tr><td>5</td><td>Read and store the current Simulink cache folder path using <code>get_param(0, 'CacheFolder')</code>.</td><td><code>origCacheFolder = char(get_param(0, 'CacheFolder'));</code></td></tr>
+<tr><td>6</td><td>Create a shared <code>state</code> struct with fields for model lists, connections, last generated model name, and other shared data.</td><td><code>state = struct(...);</code></td></tr>
+<tr><td>7</td><td>Create the main <code>uifigure</code> window. Build the grid layout, header, three tabs, and all UI controls inside them.</td><td><code>app = uifigure(...);</code></td></tr>
+<tr><td>8</td><td>If <code>isReturningUser</code> is <code>false</code>, call <code>showQuickTutorial(app)</code> to display a multi-step onboarding dialog.</td><td><code>showQuickTutorial(app);</code></td></tr>
+</tbody>
+</table>
+
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>MBD_Integration()</code></div>
+</section>
+
+<!-- ================================================================ -->
+<!--  4. COMPLETE EXECUTION FLOW                                      -->
+<!-- ================================================================ -->
+<section id="sec-flow">
+<h2>4. Complete Execution Flow</h2>
+
+<p>After initialization, the application enters an idle state. All further processing is driven by user actions (button clicks, text changes, checkbox toggles). The three major flows are described below.</p>
+
+<!-- ---- Tab 1 Flow ---- -->
+<h3 id="sec-flow-tab1">Tab 1 — Build Parent Model Flow</h3>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 1 — Browse Models Folder</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user clicks <strong>Browse...</strong> next to the Source Folder field. Callback: <code>browseModelsFolder</code>.</p>
+<ol>
+<li>Opens <code>uigetdir</code> to let the user pick a folder.</li>
+<li>Sets <code>modelsFolderEdit.Value</code> to the chosen path.</li>
+<li>If the save-folder field is empty, it is auto-filled with the same path.</li>
+<li>Calls <code>invalidatePreview()</code> (disables Generate, enables Preview).</li>
+<li>Calls <code>refreshModelList()</code>.</li>
+</ol>
+<p><code>refreshModelList()</code> calls the local helper <code>discoverModelFiles(folder)</code> which uses <code>dir(fullfile(folder, '**', '*.slx'))</code> and the same for <code>*.mdl</code>. It filters out paths containing <code>/slprj</code>, <code>/.</code>, or <code>/backup</code>. It then deduplicates by lowercase model name using a <code>containers.Map</code>, keeping only the first occurrence. The unique names and labels (with relative subfolder info) are stored into <code>state.AvailableNames</code> and <code>state.AvailableLabels</code>. These populate the left-hand <code>uilistbox</code>.</p>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>browseModelsFolder()</code>, <code>refreshModelList()</code>, <code>discoverModelFiles()</code></div>
+</div>
+</div>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 2 — Select Models</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user selects one or more items in the Available Models list and clicks <strong>Add &gt;</strong>, <strong>Add All &gt;&gt;</strong>, or <strong>Get Excel</strong>.</p>
+<ul>
+<li><code>addModel</code> / <code>addAllModels</code>: moves selected labels to the right-hand <code>selectedList</code> listbox. Skips items already present. Calls <code>invalidatePreview()</code>.</li>
+<li><code>importFromExcel</code>: opens <code>uigetfile</code> for <code>.xlsx/.xlsm/.xls/.csv</code>. Reads Column A via <code>readcell</code>. Strips empty/missing values. Deduplicates within the sheet. Matches each name (case-insensitive) against <code>state.AvailableNames</code>. Missing models trigger a confirmation dialog. Valid models replace the selected list.</li>
+</ul>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>addModel()</code>, <code>addAllModels()</code>, <code>addModelsByLabel()</code>, <code>importFromExcel()</code></div>
+</div>
+</div>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 3 — Preview &amp; Validate</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user clicks <strong>Preview</strong>. Callback: <code>doPreview</code>.</p>
+<ol>
+<li>Calls <code>validateTab1()</code> to check that folders exist and that at least one model is selected. Returns <code>folder</code>, <code>models</code>, <code>modelName</code>, <code>saveFolder</code>.</li>
+<li>Creates a progress dialog via <code>makeProgress(app, 'Preview &amp; Validation')</code>.</li>
+<li>Calls <code>validateModelCompatibility(folder, models, progressCallback, struct('ForceInheritedSampleTimes', ...))</code>.</li>
+<li>Calls <code>buildParentModelCore(folder, models, modelName, options)</code> with <code>options.PreviewOnly = true</code>.</li>
+<li>If both succeed, disables Preview, enables Generate.</li>
+<li>Formats the validation report and preview plan into the log text area.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>doPreview()</code></div>
+</div>
+</div>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 4 — Generate</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user clicks <strong>Generate</strong>. Callback: <code>doGenerate</code>.</p>
+<ol>
+<li>Validates inputs again via <code>validateTab1()</code>.</li>
+<li>If the target <code>.slx</code> file already exists, asks for overwrite confirmation.</li>
+<li>Redirects Simulink cache folder to the save folder if writable (checked by <code>cacheFolderWritable</code>).</li>
+<li>Calls <code>buildParentModelCore(folder, models, modelName, options)</code> with <code>options.PreviewOnly = false</code>.</li>
+<li>On success, auto-fills the Tab 2 model-name field and the Tab 3 destination-file field.</li>
+<li>Calls <code>refreshConnections()</code> to pre-populate the Unit Delays tab.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>doGenerate()</code></div>
+</div>
+</div>
+
+<!-- ---- Tab 2 Flow ---- -->
+<h3 id="sec-flow-tab2">Tab 2 — Unit Delays Flow</h3>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 1 — Refresh Connections</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user enters a model name and clicks <strong>Refresh list</strong>. Callback: <code>refreshConnections</code>.</p>
+<ol>
+<li>Reads the model name from <code>connModelEdit.Value</code> or falls back to <code>state.LastGeneratedModel</code>.</li>
+<li>Checks <code>bdIsLoaded(modelName)</code>.</li>
+<li>Calls <code>listModelConnections(modelName)</code> which returns a struct array of connections and a stats struct.</li>
+<li>Deduplicates connections by label using a <code>containers.Map</code>.</li>
+<li>Filters connections by checkbox state: show only those needing delays, only those with delays, or all.</li>
+<li>Populates the dropdown and table via <code>renderConnectionTable</code>.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>refreshConnections()</code></div>
+</div>
+</div>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 2 — Insert Unit Delay</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user picks a connection from the dropdown and clicks <strong>Insert Unit Delay</strong>. Callback: <code>insertDelay</code>.</p>
+<ol>
+<li>Finds the selected connection struct in <code>state.Connections</code> by matching the label string.</li>
+<li>Asks the user for confirmation.</li>
+<li>Calls <code>insertUnitDelayOnBranch(connection.System, connection.SrcBlockPath, connection.SrcPortIndex, connection.DstBlockPath, connection.DstPortIndex, struct('BlockSpacing', spacingPoints()))</code>.</li>
+<li>Saves the top-level model with <code>save_system</code>.</li>
+<li>Opens the subsystem where the delay was inserted.</li>
+<li>Calls <code>refreshConnections()</code> to update the list.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>insertDelay()</code></div>
+</div>
+</div>
+
+<!-- ---- Tab 3 Flow ---- -->
+<h3 id="sec-flow-tab3">Tab 3 — Extract Attributes Flow</h3>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 1 — Refresh Subsystem</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user clicks a Subsystem block in a Simulink diagram, then switches to Tab 3 and clicks <strong>Refresh ↺</strong>. Callback: <code>refreshSubsystem</code>.</p>
+<ol>
+<li>Calls <code>getSubsystemPorts()</code> which internally calls <code>gcbh</code> (Get Current Block Handle).</li>
+<li>Verifies the handle is valid and the block type is <code>'SubSystem'</code>.</li>
+<li>Uses <code>find_system</code> with <code>'SearchDepth', 1</code> to find all <code>Inport</code> and <code>Outport</code> blocks inside the subsystem.</li>
+<li>Returns a struct with fields <code>Handle</code>, <code>Path</code>, <code>InportNames</code>, <code>OutportNames</code>.</li>
+<li>Populates the tags listbox with port names prefixed <code>IN</code> or <code>OUT</code>.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>refreshSubsystem()</code>, <code>getSubsystemPorts()</code></div>
+</div>
+</div>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 2 — Extract</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user sets a source folder and destination file, then clicks <strong>Extract</strong>. Callback: <code>doExtract</code>.</p>
+<ol>
+<li>Calls <code>getSubsystemPorts()</code> again to get the current subsystem handle.</li>
+<li>Validates the search folder and destination file path.</li>
+<li>Builds an options struct containing <code>PortChoice</code>, <code>IncludeMetadata</code>, <code>IncludeSourceComments</code>, <code>CaseInsensitive</code>.</li>
+<li>Calls <code>extractAttributesCore(ports.Handle, searchFolder, outputFile, options)</code>.</li>
+<li>On success, enables the Open Output and Open Folder buttons.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>doExtract()</code></div>
+</div>
+</div>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 3 — Apply StorageClass</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user picks a StorageClass from the dropdown and clicks <strong>Apply StorageClass</strong>. Callback: <code>applyStorageClass</code>.</p>
+<ol>
+<li>Calls <code>resolveDestinationDataFile()</code> to determine the target <code>.m</code> file.</li>
+<li>Asks whether to overwrite the existing <code>.bak</code> backup.</li>
+<li>Calls <code>replaceStorageClass(selectedStorageClass, dataFilePath, overwriteBackup)</code>.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>applyStorageClass()</code></div>
+</div>
+</div>
+
+<div class="collapse">
+<div class="collapse-hdr" onclick="toggleC(this)"><span>Step 4 — Generate SLDD</span><span class="arrow">&#9654;</span></div>
+<div class="collapse-body">
+<p>The user clicks <strong>Generate SLDD</strong>. Callback: <code>generateSldd</code>.</p>
+<ol>
+<li>Calls <code>resolveSlddContext()</code> which gets the subsystem handle, determines the model name, locates the <code>_data.m</code> file next to the model.</li>
+<li>Asks the user for confirmation.</li>
+<li>Calls <code>convert_m_to_sldd('rootDir', folder, 'modelName', modelName, 'checkOnly', false, 'overwrite', true, 'verbose', true, 'runUnusedAudit', state.RunUnusedAudit, ...)</code>.</li>
+</ol>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>generateSldd()</code>, <code>resolveSlddContext()</code></div>
+</div>
+</div>
+
+</section>
+
+<!-- ================================================================ -->
+<!--  5. FILE-BY-FILE                                                 -->
+<!-- ================================================================ -->
+<section id="sec-files">
+<h2>5. File-by-File Explanation</h2>
+
+<!-- ---- MBD_Integration.m ---- -->
+<article id="file-mbd">
+<h3>File: <code>MBD_Integration.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Main application file. Creates the GUI window, all tabs, all controls, and defines every callback function as nested functions inside <code>MBD_Integration()</code>.</td></tr>
+<tr><th>Type</th><td>Function (no output arguments, no required input arguments).</td></tr>
+<tr><th>Inputs</th><td>None.</td></tr>
+<tr><th>Outputs</th><td>None (side effects: creates <code>uifigure</code>, starts <code>diary</code>).</td></tr>
+</table>
+
+<h4>Key Nested Callback Functions</h4>
+<table>
+<thead><tr><th>Function</th><th>Trigger</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>browseModelsFolder</code></td><td>Browse button (Source folder)</td><td>Opens folder picker, triggers <code>refreshModelList()</code>.</td></tr>
+<tr><td><code>onModelsFolderChanged</code></td><td>Source folder text change</td><td>Validates folder, calls <code>refreshModelList()</code>.</td></tr>
+<tr><td><code>onAvailableFilterChanged</code></td><td>Search field text change</td><td>Filters the Available list via <code>state.AvailableFilter</code>.</td></tr>
+<tr><td><code>addModel</code></td><td>Add &gt; button</td><td>Moves selected labels from Available to Selected list.</td></tr>
+<tr><td><code>addAllModels</code></td><td>Add All &gt;&gt; button</td><td>Moves all visible Available items to Selected list.</td></tr>
+<tr><td><code>importFromExcel</code></td><td>Get Excel button</td><td>Reads model names from a spreadsheet Column A.</td></tr>
+<tr><td><code>removeModel</code></td><td>Remove button</td><td>Removes selected items from the Selected list.</td></tr>
+<tr><td><code>clearSelectedModels</code></td><td>Clear button</td><td>Empties the Selected list.</td></tr>
+<tr><td><code>moveModelUp</code> / <code>moveModelDown</code></td><td>Up / Down buttons</td><td>Reorders items in the Selected list.</td></tr>
+<tr><td><code>doPreview</code></td><td>Preview button</td><td>Runs validation and preview (see Execution Flow).</td></tr>
+<tr><td><code>doGenerate</code></td><td>Generate button</td><td>Builds the parent model (see Execution Flow).</td></tr>
+<tr><td><code>doConfigureSignals</code></td><td>Configure Signals button</td><td>Calls <code>configureSubsystemSignals()</code>.</td></tr>
+<tr><td><code>refreshConnections</code></td><td>Refresh list button / checkboxes</td><td>Calls <code>listModelConnections()</code> and populates table.</td></tr>
+<tr><td><code>insertDelay</code></td><td>Insert Unit Delay button</td><td>Calls <code>insertUnitDelayOnBranch()</code>.</td></tr>
+<tr><td><code>refreshSubsystem</code></td><td>Refresh ↺ button (Tab 3)</td><td>Calls <code>getSubsystemPorts()</code>.</td></tr>
+<tr><td><code>doExtract</code></td><td>Extract button</td><td>Calls <code>extractAttributesCore()</code>.</td></tr>
+<tr><td><code>applyStorageClass</code></td><td>Apply StorageClass button</td><td>Calls <code>replaceStorageClass()</code>.</td></tr>
+<tr><td><code>previewSldd</code></td><td>Preview SLDD button</td><td>Calls <code>convert_m_to_sldd()</code> with <code>checkOnly=true</code>.</td></tr>
+<tr><td><code>generateSldd</code></td><td>Generate SLDD button</td><td>Calls <code>convert_m_to_sldd()</code> with <code>checkOnly=false</code>.</td></tr>
+<tr><td><code>clearAllData</code></td><td>Clear All button</td><td>Resets every input on all tabs to defaults.</td></tr>
+<tr><td><code>onAppClose</code></td><td>Window close</td><td>Stops diary, restores cache folder, deletes figure.</td></tr>
+</tbody>
+</table>
+
+<h4>Key Local Helper Functions (defined after the main function <code>end</code>)</h4>
+<table>
+<thead><tr><th>Function</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>showQuickTutorial(appFigure)</code></td><td>Displays a 7-step <code>uiconfirm</code> dialog sequence for first-time users.</td></tr>
+<tr><td><code>getSubsystemPorts(subsystemHandle)</code></td><td>Reads Inport and Outport block names from a Simulink subsystem.</td></tr>
+<tr><td><code>makeProgress(appFigure, title)</code></td><td>Creates a cancelable <code>uiprogressdlg</code> and returns <code>.set</code>, <code>.cancelled</code>, <code>.close</code> handles.</td></tr>
+<tr><td><code>notify(appFigure, message, title, icon)</code></td><td>Wraps <code>uialert</code> for user notifications.</td></tr>
+<tr><td><code>confirmDialog(...)</code></td><td>Wraps <code>uiconfirm</code>/<code>questdlg</code> for confirmation prompts.</td></tr>
+<tr><td><code>errorDetails(err)</code></td><td>Formats an MException chain into a readable string, stripping HTML tags.</td></tr>
+<tr><td><code>logTo(area, message)</code></td><td>Appends a timestamped line to a <code>uitextarea</code> and prints to the command window.</td></tr>
+<tr><td><code>logMany(area, newLines)</code></td><td>Appends multiple lines at once.</td></tr>
+<tr><td><code>discoverModelFiles(folder)</code></td><td>Recursively finds <code>.slx</code>/<code>.mdl</code> files, filters build/hidden/backup directories.</td></tr>
+<tr><td><code>renderPlanLines(result, missingImportedList)</code></td><td>Formats the preview/generate result struct into human-readable log lines.</td></tr>
+<tr><td><code>renderExtractSummary(result)</code></td><td>Formats the extraction result into log lines.</td></tr>
+<tr><td><code>centeredPosition(width, height)</code></td><td>Calculates a window position centered on screen.</td></tr>
+</tbody>
+</table>
+
+<div class="src-ref">Source: <code>MBD_Integration.m</code></div>
+</article>
+
+<!-- ---- buildParentModelCore.m ---- -->
+<article id="file-build">
+<h3>File: <code>buildParentModelCore.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Core engine that creates a new Simulink model, adds Model Reference blocks for each child model, plans and executes signal connections, optionally wraps everything in a subsystem, and saves the result.</td></tr>
+<tr><th>Type</th><td>Function.</td></tr>
+<tr><th>Inputs</th><td><code>modelsFolder</code> (char), <code>selectedModels</code> (cell of char), <code>targetModelName</code> (char), <code>options</code> (struct).</td></tr>
+<tr><th>Outputs</th><td><code>result</code> (struct with fields: <code>Success</code>, <code>Cancelled</code>, <code>PreviewOnly</code>, <code>TargetModel</code>, <code>OutputFile</code>, <code>Models</code>, <code>InternalConnections</code>, <code>RootInputs</code>, <code>RootOutputs</code>, <code>ConfigParamNames</code>, <code>ConfigParamValues</code>, <code>Warnings</code>, <code>Notes</code>, <code>Counts</code>, <code>SubsystemName</code>, <code>BackupFile</code>).</td></tr>
+</table>
+
+<h4>Major Processing Stages</h4>
+<ol>
+<li><strong>Input Validation</strong> — Checks folder existence, strips file extensions from model names, validates output name and folder.</li>
+<li><strong>Discovery</strong> — Calls the local <code>discoverModelFiles</code> to build a name&rarr;path map. Matches each selected model against this map.</li>
+<li><strong>Load Models</strong> — Loads each child model via <code>load_system</code>. Optionally sets <code>ModelReferenceNumInstancesAllowed</code> to <code>'Multi'</code>.</li>
+<li><strong>Force Inherited Sample Times</strong> — If <code>options.ForceInheritedSampleTimes</code> is <code>true</code>, calls <code>collectSampleTimeChanges(modelName)</code> on each child model to find Inport/Outport/UnitDelay blocks whose SampleTime is not <code>'-1'</code>, then sets each to <code>'-1'</code> and saves the child model.</li>
+<li><strong>Configuration Check</strong> — Reads specified configuration parameters (default: <code>UseDivisionForNetSlopeComputation</code>) from each model, logs warnings if values differ.</li>
+<li><strong>Read Interfaces</strong> — Calls <code>getRootPortNames</code> on each model to get ordered lists of input and output port names.</li>
+<li><strong>Plan Connections</strong> — For each source model output, scans all other models' inputs for a case-insensitive name match. Marks matched inputs as connected. Self-matching ports on the same model are noted but skipped. Unmatched inputs become Root Inputs. All outputs become Root Outputs (with disambiguation if names collide).</li>
+<li><strong>Preview Exit</strong> — If <code>options.PreviewOnly</code> is <code>true</code>, returns the plan without creating any model.</li>
+<li><strong>Build</strong> — Creates a new model with <code>new_system</code>. Sets solver to <code>FixedStepDiscrete</code>, <code>SingleTasking</code>, <code>AutoInsertRateTranBlk='off'</code>. Computes parent FixedStep as the GCD of all child step sizes. Sets 15 diagnostic parameters to <code>'none'</code>.</li>
+<li><strong>Block Placement</strong> — Two modes:
+  <ul>
+  <li><strong>From/Goto</strong>: Disambiguates tag names, calculates uniform block heights, places Model Reference blocks, Goto blocks after outputs, and From blocks before inputs. Places UnitDelay blocks on feedback paths if <code>AutoDelayFeedback</code> is on. Places root Inports with Goto blocks and root Outports with From blocks.</li>
+  <li><strong>Direct Lines</strong>: Places Model Reference blocks, draws direct lines via <code>add_line</code>. Inserts UnitDelay blocks on feedback paths.</li>
+  </ul>
+</li>
+<li><strong>Subsystem Wrap</strong> — If <code>WrapInSubsystem</code> is true, creates a parent subsystem, moves all contents inside, and wires root Inports/Outports to the subsystem boundary.</li>
+<li><strong>Final Save</strong> — Updates the diagram, saves the model, relocates stray <code>.slxc</code> cache files.</li>
+</ol>
+
+<h4>Key Local Functions</h4>
+<table>
+<thead><tr><th>Function</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>collectSampleTimeChanges(sys)</code></td><td>Finds Inport/Outport/UnitDelay blocks in <code>sys</code> whose SampleTime is not <code>'-1'</code>.</td></tr>
+<tr><td><code>readConfigParamSafe(modelName, paramName)</code></td><td>Attempts to read a config parameter via multiple fallback strategies.</td></tr>
+<tr><td><code>discoverModelFiles(modelsFolder)</code></td><td>Recursively finds models, deduplicates by lowercase name.</td></tr>
+<tr><td><code>getRootPortNames(modelName)</code></td><td>Finds root Inport/Outport blocks, returns sorted port names.</td></tr>
+<tr><td><code>normKey(name, caseInsensitive)</code></td><td>Returns <code>lower(name)</code> or <code>name</code> depending on flag.</td></tr>
+<tr><td><code>makeUniqueBlockName(sys, name)</code></td><td>Appends numeric suffix until the block path is unique.</td></tr>
+<tr><td><code>paletteColor(index)</code></td><td>Returns a color string from a 24-row RGB palette.</td></tr>
+<tr><td><code>safeName(s)</code></td><td>Converts a string to a valid MATLAB identifier.</td></tr>
+<tr><td><code>fillDefaults(options, defaults)</code></td><td>Sets missing fields to default values.</td></tr>
+</tbody>
+</table>
+
+<div class="src-ref">Source: <code>buildParentModelCore.m</code></div>
+</article>
+
+<!-- ---- validateModelCompatibility.m ---- -->
+<article id="file-validate">
+<h3>File: <code>validateModelCompatibility.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Checks whether the selected child models are compatible for integration. Performs static sample-time analysis and a temporary Simulink compilation test.</td></tr>
+<tr><th>Type</th><td>Function.</td></tr>
+<tr><th>Inputs</th><td><code>modelsFolder</code> (char), <code>selectedModels</code> (cell of char), <code>progressFcn</code> (function handle, optional), <code>options</code> (struct, optional).</td></tr>
+<tr><th>Outputs</th><td><code>report</code> (struct with fields: <code>Issues</code>, <code>ModelsChecked</code>, <code>ModelsSkipped</code>, <code>RecommendedStep</code>, <code>LogLines</code>, <code>Summary</code>).</td></tr>
+</table>
+<h4>Processing Stages</h4>
+<ol>
+<li><strong>Pre-map &amp; Load</strong> — Scans folder for model files. Loads unloaded models. Records load failures as issues.</li>
+<li><strong>Static Sample-Time Check</strong> — Reads <code>FixedStep</code> from each model. Scans root Outports for hardcoded sample times. Computes GCD via <code>computeGCD</code> (scales by 10<sup>6</sup>, uses integer <code>gcd</code>).</li>
+<li><strong>Temporary Parent Assembly</strong> — Creates <code>'teamtools_validation_temp'</code> model. Adds a Model Reference block for each child. Sets solver to <code>FixedStepDiscrete</code>.</li>
+<li><strong>Compile</strong> — Calls <code>set_param(tempParent, 'SimulationCommand', 'update')</code>. Catches compilation errors and extracts messages.</li>
+<li><strong>Parse Results</strong> — Searches error messages for known patterns (e.g. "fixed-step size", "Invalid root Outport") and creates structured issue records.</li>
+<li><strong>Cleanup</strong> — Closes the temporary model and all models opened during this function.</li>
+</ol>
+
+<h4>Key Local Functions</h4>
+<table>
+<thead><tr><th>Function</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>makeIssue(category, severity, model, port, description, fix)</code></td><td>Creates a structured issue record.</td></tr>
+<tr><td><code>extractModelName(errMsg, knownModels)</code></td><td>Searches an error message for a known model name. Returns <code>'(unknown)'</code> if none found.</td></tr>
+<tr><td><code>computeGCD(a, b)</code></td><td>Computes GCD of two floating-point numbers by scaling to integers.</td></tr>
+</tbody>
+</table>
+<div class="src-ref">Source: <code>validateModelCompatibility.m</code></div>
+</article>
+
+
+
+<!-- ---- extractAttributesCore.m ---- -->
+<article id="file-extract">
+<h3>File: <code>extractAttributesCore.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Scans <code>.m</code> files for variable attribute assignments matching subsystem port names and writes matches to an output <code>.m</code> file.</td></tr>
+<tr><th>Type</th><td>Function.</td></tr>
+<tr><th>Inputs</th><td><code>subsystemHandle</code> (numeric Simulink handle), <code>searchFolder</code> (char), <code>outputFile</code> (char), <code>options</code> (struct with <code>PortChoice</code>, <code>IncludeMetadata</code>, <code>IncludeSourceComments</code>, <code>CaseInsensitive</code>).</td></tr>
+<tr><th>Outputs</th><td><code>result</code> (struct with <code>Subsystem</code>, <code>PortChoice</code>, <code>FilesFound</code>, <code>FilesRead</code>, <code>FilesSkipped</code>, <code>UniqueMatches</code>, <code>OutputFile</code>, <code>Tags</code>, <code>Warnings</code>, <code>Cancelled</code>).</td></tr>
+</table>
+<h4>Processing</h4>
+<ol>
+<li>Gets Inport/Outport names from the subsystem using <code>getImmediatePortNames</code>.</li>
+<li>Selects Inports, Outports, or Both based on <code>options.PortChoice</code>.</li>
+<li>Builds a dual-tag lookup map: both the raw port name and its <code>matlab.lang.makeValidName</code> version map to the original raw name.</li>
+<li>Recursively finds all <code>.m</code> files in <code>searchFolder</code> (excludes the output file itself).</li>
+<li>Reads each file line by line. Skips blank lines and comment lines. Checks for a dot character (indicating <code>Tag.Property = value</code>). Extracts the part before the first dot as the tag. Looks up the tag in the lookup map. Skips lines that are <code>Simulink.Signal</code> instantiations. Stores unique records in a <code>containers.Map</code>.</li>
+<li>Writes the output file with optional metadata header, grouped into Inports and Outports sections. For each port tag, writes <code>cleanVar = Simulink.Signal;</code> followed by all matched attribute lines.</li>
+</ol>
+<div class="src-ref">Source: <code>extractAttributesCore.m</code></div>
+</article>
+
+<!-- ---- convert_m_to_sldd.m ---- -->
+<article id="file-sldd">
+<h3>File: <code>convert_m_to_sldd.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Finds <code>*_data.m</code> scripts, runs them in the base workspace, classifies the resulting variables, and creates three <code>.sldd</code> Simulink Data Dictionary files per model.</td></tr>
+<tr><th>Type</th><td>Function (uses <code>inputParser</code> for name-value arguments).</td></tr>
+<tr><th>Inputs (Name-Value)</th><td><code>'rootDir'</code> (default <code>pwd</code>), <code>'modelName'</code>, <code>'checkOnly'</code> (default <code>true</code>), <code>'overwrite'</code> (default <code>true</code>), <code>'verbose'</code> (default <code>true</code>), <code>'runUnusedAudit'</code> (default <code>false</code>), <code>'ProgressFcn'</code>.</td></tr>
+<tr><th>Outputs</th><td>None (side effects: creates <code>.sldd</code> files, modifies model).</td></tr>
+</table>
+<h4>Processing Per Model</h4>
+<ol>
+<li><strong>Stage 1:</strong> Captures base workspace state. Runs the <code>_data.m</code> script via <code>evalin('base', sprintf('run(''%s'');', mfPath))</code>. Identifies new variables.</li>
+<li><strong>Stage 2:</strong> Loads the model. Scans all signal lines for those with <code>MustResolveToSignalObject='on'</code>. Finds which M-file variables are referenced. Runs <code>slResolve</code> on each candidate; if any fail, the model is skipped.</li>
+<li><strong>Stage 3:</strong> Classifies variables:
+<ul>
+<li>IO names = root Inport/Outport block names.</li>
+<li><code>Simulink.Signal</code> objects not in IO &rarr; Local signals.</li>
+<li>Non-signal variables starting with <code>m_</code> &rarr; Parameters with <code>Const</code> storage.</li>
+<li>Other non-signal variables &rarr; Parameters with <code>Define</code> storage.</li>
+</ul>
+</li>
+<li><strong>Stage 4 (skipped if <code>checkOnly</code>):</strong> Creates/resets three <code>.sldd</code> files:
+<ul>
+<li><code>&lt;model&gt;_DataDictionary.sldd</code> — IO signals (<code>StorageClass='Auto'</code>).</li>
+<li><code>&lt;model&gt;_Param.sldd</code> — <code>m_*</code> as Const, others as Define.</li>
+<li><code>&lt;model&gt;_Local.sldd</code> — Local signals (<code>StorageClass='Auto'</code>).</li>
+</ul>
+<li><strong>Stage 5:</strong> Clears M-file variables from the base workspace. If <code>runUnusedAudit</code> is true, runs <code>Simulink.findVars</code> to report unused dictionary variables.</li>
+</ol>
+<div class="src-ref">Source: <code>convert_m_to_sldd.m</code> (defined inside <code>extractAttributesCore.m</code>)</div>
+<div class="callout callout-info"><strong>Note:</strong> In the provided source code, <code>convert_m_to_sldd</code> and <code>replaceStorageClass</code> are defined within the same file as <code>extractAttributesCore.m</code>, appended after the main function and its local helpers.</div>
+</article>
+
+<!-- ---- replaceStorageClass.m ---- -->
+<article id="file-storage">
+<h3>File: <code>replaceStorageClass.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Uses regex to find and replace <code>.StorageClass = '...'</code> assignments in <code>*_data.m</code> files.</td></tr>
+<tr><th>Type</th><td>Function.</td></tr>
+<tr><th>Inputs</th><td><code>selectedStorageClass</code> (char: <code>'Auto'</code>, <code>'ExportedGlobal'</code>, or <code>'ImportedExtern'</code>), <code>dataFilePath</code> (char, optional), <code>overwriteBackup</code> (logical, optional).</td></tr>
+<tr><th>Outputs</th><td><code>results</code> (struct array with <code>FilePath</code>, <code>Changed</code>, <code>ReplacementCount</code>, <code>Warnings</code>, <code>BackupPath</code>).</td></tr>
+</table>
+<h4>Processing</h4>
+<ol>
+<li>If no file path is given, scans <code>pwd</code> for <code>*_data.m</code> files.</li>
+<li>Reads entire file content via <code>fileread</code>.</li>
+<li>Searches using regex pattern: <code>\.StorageClass\s*=\s*'(?:Auto|ExportedGlobal|ImportedExtern)'</code>.</li>
+<li>Creates a <code>.bak</code> backup. Uses <code>regexprep</code> to replace all matches. Writes the modified content back with <code>fwrite</code>.</li>
+<li>Also checks for declared <code>Simulink.Signal</code>/<code>Simulink.Parameter</code> objects that have no corresponding StorageClass assignment and warns about them.</li>
+</ol>
+<div class="src-ref">Source: <code>replaceStorageClass.m</code> (embedded in the same file as <code>extractAttributesCore.m</code> in the provided code)</div>
+</article>
+
+<!-- ---- listModelConnections.m ---- -->
+<article id="file-list">
+<h3>File: <code>listModelConnections.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Scans a loaded Simulink model to find all model-to-model signal connections. Returns only backward connections and self-loops.</td></tr>
+<tr><th>Type</th><td>Function.</td></tr>
+<tr><th>Inputs</th><td><code>systemName</code> (char).</td></tr>
+<tr><th>Outputs</th><td><code>connections</code> (struct array), <code>stats</code> (struct with counts).</td></tr>
+</table>
+<h4>Processing</h4>
+<ol>
+<li>Finds all blocks via <code>find_system</code>. Identifies Model Reference blocks (those with <code>BlockType='Model'</code> or having a non-empty <code>ModelName</code> parameter).</li>
+<li>Collects all Goto, From, and UnitDelay block paths and port handles.</li>
+<li>Maps all Model Reference input port handles to their owning model index.</li>
+<li>For each model output port, traces the signal line. Uses <code>expandThroughDelays</code> to follow chains of UnitDelay blocks (up to depth 8). If the destination port is a model input, records a direct-line connection. If the destination is a Goto block input, records a pending Goto entry.</li>
+<li>Traces From block output lines similarly, recording pending From entries.</li>
+<li>Pairs pending Gotos and Froms by matching tag names. If exactly one Goto matches, creates a <code>'fromgoto'</code> connection.</li>
+<li>The <code>isBackwardConnection</code> function checks block positions: if the source center is to the right of the destination center (horizontal) or below (vertical), it is backward. Self-loops always return <code>true</code>.</li>
+</ol>
+<div class="src-ref">Source: <code>listModelConnections.m</code></div>
+</article>
+
+<!-- ---- insertUnitDelayOnBranch.m ---- -->
+<article id="file-insert">
+<h3>File: <code>insertUnitDelayOnBranch.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Inserts a single <code>UnitDelay</code> block on a specific connection between a source output port and a destination input port.</td></tr>
+<tr><th>Type</th><td>Function.</td></tr>
+<tr><th>Inputs</th><td><code>systemName</code>, <code>sourceBlockPath</code>, <code>outputPortIndex</code>, <code>destBlockPath</code>, <code>inputPortIndex</code>, <code>options</code> (with <code>BlockName</code>, <code>SampleTime</code>, <code>BlockSpacing</code>).</td></tr>
+<tr><th>Outputs</th><td><code>result</code> (struct with <code>NewBlockPath</code>, <code>System</code>, <code>Message</code>).</td></tr>
+</table>
+<h4>Processing</h4>
+<ol>
+<li>Verifies the model is loaded and both blocks exist.</li>
+<li>Gets the source output line handle. Collects all destination port handles on that line (including branch children).</li>
+<li>Calculates the delay block position to the left of the destination port. Checks for overlaps with all existing blocks using <code>isCollision</code> (bounding box intersection). Shifts down by 25 pixels up to 10 times if collisions are detected.</li>
+<li>Deletes the existing line(s). Adds the UnitDelay block with <code>SampleTime='-1'</code>. Connects source &rarr; delay &rarr; destination. Reconnects any other destinations that shared the original line.</li>
+</ol>
+<div class="src-ref">Source: <code>insertUnitDelayOnBranch.m</code></div>
+</article>
+
+<!-- ---- configureSubsystemSignals.m ---- -->
+<article id="file-configure">
+<h3>File: <code>configureSubsystemSignals.m</code></h3>
+<table>
+<tr><th>Purpose</th><td>Configures signal names, propagation, and resolution on the ports of a selected Subsystem block.</td></tr>
+<tr><th>Type</th><td>Function.</td></tr>
+<tr><th>Inputs</th><td><code>options</code> (struct with <code>ProcessInports</code>, <code>ProcessOutports</code>, <code>ShowPropagation</code>, <code>MustResolve</code>).</td></tr>
+<tr><th>Outputs</th><td><code>report</code> (MATLAB <code>table</code> with columns: Port, Direction, Signal, Status, Propagation, Details).</td></tr>
+</table>
+<h4>Processing</h4>
+<ol>
+<li>Gets the active model name from <code>bdroot</code> and the selected block from <code>gcb</code>. Verifies it is a SubSystem.</li>
+<li><strong>Inports:</strong> For each internal Inport block, finds the corresponding external port handle on the subsystem boundary. Gets the external signal line's source port handle. Calls <code>ensureSignalObject</code> to create a <code>Simulink.Signal</code> in the Data Dictionary or Model Workspace if one does not exist. Sets the signal name and <code>MustResolveToSignalObject</code> on the source port. Enables <code>ShowPropagatedSignals</code> on the internal Inport's output line.</li>
+<li><strong>Outports:</strong> Same logic but follows the internal Outport's input line back to its source port, configures that source, and enables propagation on the external Outport's output line.</li>
+<li>Persists changes to the Data Dictionary if attached. Updates and saves the model.</li>
+</ol>
+<div class="src-ref">Source: <code>configureSubsystemSignals.m</code></div>
+</article>
+
+</section>
+
+<!-- ================================================================ -->
+<!--  6. FUNCTION REFERENCE                                           -->
+<!-- ================================================================ -->
+<section id="sec-functions">
+<h2>6. Function Reference</h2>
+<p>This section provides a consolidated reference for all functions across all provided source files. Only the most important functions are listed below. For nested callbacks inside <code>MBD_Integration.m</code>, see the File-by-File section above.</p>
+
+<table>
+<thead><tr><th>Function</th><th>File</th><th>Inputs</th><th>Outputs</th><th>Called By</th><th>Calls</th></tr></thead>
+<tbody>
+<tr><td><code>MBD_Integration()</code></td><td>MBD_Integration.m</td><td>None</td><td>None</td><td>User (command window)</td><td>All nested callbacks, <code>showQuickTutorial</code></td></tr>
+<tr><td><code>buildParentModelCore()</code></td><td>buildParentModelCore.m</td><td>folder, models, name, options</td><td>result struct</td><td><code>doPreview</code>, <code>doGenerate</code></td><td><code>discoverModelFiles</code>, <code>getRootPortNames</code>, <code>collectSampleTimeChanges</code>, <code>readConfigParamSafe</code>, Simulink API</td></tr>
+<tr><td><code>validateModelCompatibility()</code></td><td>validateModelCompatibility.m</td><td>folder, models, progressFcn, options</td><td>report struct</td><td><code>doPreview</code></td><td><code>computeGCD</code>, <code>makeIssue</code>, Simulink API</td></tr>
+<tr><td><code>extractAttributesCore()</code></td><td>extractAttributesCore.m</td><td>handle, folder, file, options</td><td>result struct</td><td><code>doExtract</code></td><td><code>getImmediatePortNames</code>, <code>runExtraction</code></td></tr>
+<tr><td><code>convert_m_to_sldd()</code></td><td>(inside extractAttributesCore.m)</td><td>Name-value pairs</td><td>None</td><td><code>previewSldd</code>, <code>generateSldd</code></td><td><code>createOrResetDict</code>, <code>upsertEntry</code>, <code>clearMVarsFromBase</code>, Simulink API</td></tr>
+<tr><td><code>replaceStorageClass()</code></td><td>(inside extractAttributesCore.m)</td><td>class, path, backup flag</td><td>results struct array</td><td><code>applyStorageClass</code></td><td><code>fileread</code>, <code>regexprep</code>, <code>fwrite</code></td></tr>
+<tr><td><code>listModelConnections()</code></td><td>listModelConnections.m</td><td>systemName</td><td>connections, stats</td><td><code>refreshConnections</code></td><td><code>expandThroughDelays</code>, <code>isBackwardConnection</code>, <code>resolvePortName</code></td></tr>
+<tr><td><code>insertUnitDelayOnBranch()</code></td><td>insertUnitDelayOnBranch.m</td><td>sys, src, outIdx, dst, inIdx, options</td><td>result struct</td><td><code>insertDelay</code></td><td><code>collectAllLines</code>, <code>isCollision</code>, <code>clearPortLine</code>, <code>tryConnect</code></td></tr>
+<tr><td><code>configureSubsystemSignals()</code></td><td>configureSubsystemSignals.m</td><td>options struct</td><td>report table</td><td><code>doConfigureSignals</code></td><td><code>processSubsystemInports</code>, <code>processSubsystemOutports</code>, <code>ensureSignalObject</code></td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  8. DATA FLOW                                                    -->
+<!-- ================================================================ -->
+<section id="sec-dataflow">
+<h2>8. Data Flow</h2>
+<h3>Tab 1 — Build Parent Model</h3>
+<pre><code>User selects folder
+  ↓
+discoverModelFiles() → state.AvailableNames, state.AvailableLabels
+  ↓
+User arranges models → selectedList.Items (ordered model names)
+  ↓
+validateModelCompatibility() → report struct (issues, recommended step)
+  ↓
+buildParentModelCore() [PreviewOnly=true] → result struct (connections plan)
+  ↓
+buildParentModelCore() [PreviewOnly=false] → new .slx file on disk
+  ↓
+result.TargetModel → connModelEdit.Value (Tab 2)
+result.TargetModel → destEdit.Value (Tab 3)</code></pre>
+
+<h3>Tab 2 — Unit Delays</h3>
+<pre><code>User provides model name
+  ↓
+listModelConnections() → connections struct array, stats struct
+  ↓
+User selects connection
+  ↓
+insertUnitDelayOnBranch() → UnitDelay block added to diagram, model saved</code></pre>
+
+<h3>Tab 3 — Extract Attributes</h3>
+<pre><code>User selects Subsystem in Simulink
+  ↓
+getSubsystemPorts() → port names (tags)
+  ↓
+extractAttributesCore() → output .m file on disk
+  ↓
+replaceStorageClass() → modified .m file
+  ↓
+convert_m_to_sldd() → three .sldd files, linked to model</code></pre>
+</section>
+
+<!-- ================================================================ -->
+<!--  9. CONTROL FLOW                                                 -->
+<!-- ================================================================ -->
+<section id="sec-controlflow">
+<h2>9. Control Flow</h2>
+
+<h3>Key Conditional Branches</h3>
+<table>
+<thead><tr><th>Location</th><th>Condition</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>buildParentModelCore</code></td><td><code>if result.PreviewOnly</code></td><td>Returns the plan struct without creating any model. Otherwise proceeds to build.</td></tr>
+<tr><td><code>buildParentModelCore</code></td><td><code>if strcmp(connectionMethod, 'fromgoto')</code></td><td>Selects the From/Goto routing path. The <code>else</code> branch selects Direct Lines routing.</td></tr>
+<tr><td><code>buildParentModelCore</code></td><td><code>if autoDelayFeedback && isFeedbackLoop</code></td><td>Inserts a UnitDelay block between the From block and the model input.</td></tr>
+<tr><td><code>buildParentModelCore</code></td><td><code>if options.ForceInheritedSampleTimes</code></td><td>Scans and resets all Inport/Outport/UnitDelay SampleTimes to <code>'-1'</code>.</td></tr>
+<tr><td><code>buildParentModelCore</code></td><td><code>if wrapInSub</code></td><td>Creates a parent subsystem, wires root ports to it.</td></tr>
+<tr><td><code>listModelConnections</code></td><td><code>isBackwardConnection(srcPath, dstPath)</code></td><td>Returns <code>true</code> for self-loops (same block), or when the source block center is to the right of (or below) the destination center.</td></tr>
+<tr><td><code>insertUnitDelayOnBranch</code></td><td><code>while isCollision(...) && shiftAttempts < 10</code></td><td>Shifts the delay block position down by 25 pixels per attempt.</td></tr>
+<tr><td><code>extractAttributesCore</code></td><td><code>switch options.PortChoice</code></td><td>Selects Inports only, Outports only, or Both as search tags.</td></tr>
+<tr><td><code>convert_m_to_sldd</code></td><td><code>if opt.checkOnly</code></td><td>Prints targets but does not create SLDD files.</td></tr>
+<tr><td><code>MBD_Integration</code></td><td><code>if ~isReturningUser</code></td><td>Shows the first-time tutorial dialogs.</td></tr>
+</tbody>
+</table>
+
+<h3>Key Loops</h3>
+<table>
+<thead><tr><th>Location</th><th>Loop</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>buildParentModelCore</code></td><td><code>for sourceIndex = 1:numModels</code> (nested <code>for destinationIndex</code>)</td><td>Compares every source output to every other model's inputs for name matching.</td></tr>
+<tr><td><code>listModelConnections</code></td><td><code>for sourceIndex = 1:numel(modelBlocks)</code></td><td>Traces every model output line to find direct and From/Goto connections.</td></tr>
+<tr><td><code>extractAttributesCore → runExtraction</code></td><td><code>for fileIdx = 1:numel(matlabFiles)</code> (inner <code>while true</code> on <code>fgetl</code>)</td><td>Reads every <code>.m</code> file line by line.</td></tr>
+<tr><td><code>insertUnitDelayOnBranch</code></td><td><code>while isCollision(...) && shiftAttempts < 10</code></td><td>Shifts delay block position to avoid overlap.</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  10. ALGORITHMS AND CALCULATIONS                                 -->
+<!-- ================================================================ -->
+<section id="sec-algorithms">
+<h2>10. Algorithms and Calculations</h2>
+
+<h3>GCD Step-Size Calculation</h3>
+<p>Used in both <code>validateModelCompatibility.m</code> and <code>buildParentModelCore.m</code>.</p>
+<p><strong>Purpose:</strong> Find the largest step size that is an integer divisor of every child model's FixedStep, so the parent solver can accommodate all rates.</p>
+<pre><code>% From validateModelCompatibility.m → computeGCD():
+scale = 1e6;
+g = gcd(round(a * scale), round(b * scale)) / scale;
+
+% From buildParentModelCore.m (inline):
+baseStep = detectedRates(1);
+for r = 2:numel(detectedRates)
+    baseStep = gcd(round(baseStep*1e6), round(detectedRates(r)*1e6)) / 1e6;
+end</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+<p>Both implementations scale floating-point values to integers (multiply by 10<sup>6</sup>), call MATLAB's built-in <code>gcd</code>, then scale back.</p>
+
+<h3>Block Height Calculation</h3>
+<pre><code>% From buildParentModelCore.m:
+uniformModelH = max(140, (nP + 1) * 36);</code></pre>
+<p>Where <code>nP = max(numInputs, numOutputs, 1)</code>. Each port gets 36 pixels of vertical space, plus one extra slot.</p>
+
+<h3>From/Goto Block Width Calculation</h3>
+<pre><code>% From buildParentModelCore.m:
+commonFromGotoWidth = max(100, ceil(longestTagLength * 8.5) + 30);</code></pre>
+<p>Each character occupies approximately 8.5 pixels, plus 30 pixels of padding.</p>
+
+<h3>Backward Connection Detection</h3>
+<pre><code>% From listModelConnections.m → isBackwardConnection():
+dx = srcCx - dstCx;   % positive means source is to the right
+dy = srcCy - dstCy;   % positive means source is below
+tol = 5;
+if abs(dy) >= abs(dx)
+    tf = dy > tol;     % vertical-dominant: bottom→top
+else
+    tf = dx > tol;     % horizontal-dominant: right→left
+end</code></pre>
+<p>Self-loops (same source and destination block) always return <code>true</code>.</p>
+
+<h3>Collision Detection for Block Placement</h3>
+<pre><code>% From insertUnitDelayOnBranch.m → isCollision():
+function tf = isCollision(rect, allRects)
+  margin = 2;
+  lo = [rect(1) - margin, rect(2) - margin];
+  hi = [rect(3) + margin, rect(4) + margin];
+  for r = 1:size(allRects, 1)
+    o = allRects(r, :);
+    if lo(1) < o(3) && o(1) < hi(1) && lo(2) < o(4) && o(2) < hi(2)
+      tf = true; return;
+    end
+  end
+  tf = false;
+end</code></pre>
+<p>Standard axis-aligned bounding box (AABB) overlap test with a 2-pixel margin.</p>
+
+<div class="src-ref">Sources: <code>validateModelCompatibility.m</code>, <code>buildParentModelCore.m</code>, <code>listModelConnections.m</code>, <code>insertUnitDelayOnBranch.m</code></div>
+</section>
+
+<!-- ================================================================ -->
+<!--  11. INPUTS                                                      -->
+<!-- ================================================================ -->
+<section id="sec-inputs">
+<h2>11. Inputs</h2>
+<table>
+<thead><tr><th>Input</th><th>Source</th><th>Data Type</th><th>Where Used</th></tr></thead>
+<tbody>
+<tr><td>Source folder path</td><td>User (Browse dialog or typed text)</td><td>char</td><td><code>refreshModelList()</code>, passed to <code>buildParentModelCore</code></td></tr>
+<tr><td>Selected models list</td><td>User (listbox selection / Excel import)</td><td>cell array of char</td><td><code>buildParentModelCore</code></td></tr>
+<tr><td>Output model name</td><td>User (text field)</td><td>char</td><td><code>buildParentModelCore</code></td></tr>
+<tr><td>Destination folder</td><td>User (Browse dialog or typed text)</td><td>char</td><td><code>buildParentModelCore</code></td></tr>
+<tr><td>Excel/CSV file for model import</td><td>User (file picker)</td><td>.xlsx/.xlsm/.xls/.csv</td><td><code>importFromExcel()</code></td></tr>
+<tr><td>Connection type dropdown</td><td>User (dropdown: <code>'From/Goto blocks'</code> or <code>'Direct lines'</code>)</td><td>char</td><td><code>integrationStyle()</code></td></tr>
+<tr><td>Layout dropdown</td><td>User (dropdown: <code>'Horizontal...'</code> or <code>'Vertical...'</code>)</td><td>char</td><td><code>integrationStyle()</code></td></tr>
+<tr><td>Checkboxes (Wrap, Color, AutoDelay, ForceInherited, Inports, Outports, Propagation, Resolver)</td><td>User</td><td>logical</td><td>Various options structs</td></tr>
+<tr><td>Selected Simulink subsystem block handle</td><td><code>gcbh</code> (Simulink API)</td><td>double (handle)</td><td><code>getSubsystemPorts()</code>, <code>configureSubsystemSignals()</code></td></tr>
+<tr><td>Search folder (Tab 3)</td><td>User (Browse dialog or typed text)</td><td>char</td><td><code>extractAttributesCore()</code></td></tr>
+<tr><td>Destination file (Tab 3)</td><td>User (text field or file picker)</td><td>char (.m path)</td><td><code>extractAttributesCore()</code>, <code>replaceStorageClass()</code></td></tr>
+<tr><td>StorageClass dropdown</td><td>User (<code>'Auto'</code>, <code>'ExportedGlobal'</code>, <code>'ImportedExtern'</code>)</td><td>char</td><td><code>replaceStorageClass()</code></td></tr>
+<tr><td>Diagnostic audit toggle</td><td>User (toggle switch)</td><td>char (<code>'On'</code>/<code>'Off'</code>)</td><td><code>convert_m_to_sldd</code> <code>runUnusedAudit</code> parameter</td></tr>
+<tr><td>logo.png</td><td>File on disk</td><td>PNG image</td><td>Header <code>uiimage</code></td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  12. OUTPUTS                                                     -->
+<!-- ================================================================ -->
+<section id="sec-outputs">
+<h2>12. Outputs</h2>
+<table>
+<thead><tr><th>Output</th><th>Producer</th><th>Format</th></tr></thead>
+<tbody>
+<tr><td>Parent Simulink model</td><td><code>buildParentModelCore</code></td><td><code>.slx</code> file</td></tr>
+<tr><td>Backup of existing model</td><td><code>buildParentModelCore</code></td><td><code>.slx.bak</code> file</td></tr>
+<tr><td>Simulink cache</td><td>Simulink</td><td><code>.slxc</code> file (moved to destination folder)</td></tr>
+<tr><td>Session log</td><td><code>diary</code></td><td><code>log.txt</code> in <code>pwd</code></td></tr>
+<tr><td>Extracted attributes script</td><td><code>extractAttributesCore</code></td><td><code>.m</code> file</td></tr>
+<tr><td>Data dictionary (IO)</td><td><code>convert_m_to_sldd</code></td><td><code>&lt;model&gt;_DataDictionary.sldd</code></td></tr>
+<tr><td>Data dictionary (Params)</td><td><code>convert_m_to_sldd</code></td><td><code>&lt;model&gt;_Param.sldd</code></td></tr>
+<tr><td>Data dictionary (Local)</td><td><code>convert_m_to_sldd</code></td><td><code>&lt;model&gt;_Local.sldd</code></td></tr>
+<tr><td>Backup of data file</td><td><code>replaceStorageClass</code></td><td><code>.m.bak</code> file</td></tr>
+<tr><td>Console output</td><td><code>fprintf</code> calls, <code>logTo</code>, <code>logMany</code></td><td>MATLAB Command Window + <code>log.txt</code></td></tr>
+<tr><td>Modified child models (SampleTime changes)</td><td><code>buildParentModelCore</code></td><td>Modified <code>.slx</code> files saved in-place</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  13. EXTERNAL DEPENDENCIES                                       -->
+<!-- ================================================================ -->
+<section id="sec-deps">
+<h2>13. External Dependencies</h2>
+
+<h3>MATLAB Toolboxes</h3>
+<table>
+<thead><tr><th>Dependency</th><th>Evidence in Source Code</th></tr></thead>
+<tbody>
+<tr><td><strong>Simulink</strong></td><td>Extensive use of <code>new_system</code>, <code>load_system</code>, <code>save_system</code>, <code>add_block</code>, <code>add_line</code>, <code>set_param</code>, <code>get_param</code>, <code>find_system</code>, <code>bdIsLoaded</code>, <code>bdIsDirty</code>, <code>bdroot</code>, <code>gcb</code>, <code>gcbh</code>, <code>getfullname</code>, <code>Simulink.SubSystem.deleteContents</code>, <code>Simulink.Signal</code>, <code>Simulink.Parameter</code>, <code>Simulink.ConfigSetRef</code>, <code>Simulink.data.dictionary.*</code>, <code>Simulink.findVars</code>, <code>slResolve</code>.</td></tr>
+</tbody>
+</table>
+<p>No other MATLAB toolboxes are explicitly required by the provided code. The functions used (<code>uifigure</code>, <code>uigridlayout</code>, <code>uitabgroup</code>, <code>uiprogressdlg</code>, <code>uiconfirm</code>, etc.) are part of MATLAB's App Designer framework, available in base MATLAB R2020a+.</p>
+
+<h3>External Functions Not Provided</h3>
+<div class="callout callout-warn">
+  <p><strong>Note:</strong> Some external functions are referenced in the code but not provided in the source distribution. These include <code>convert_m_to_sldd</code> and <code>.sldd</code>. Their implementations are assumed to be available on the MATLAB path.</p>
+</section>
+
+<!-- ================================================================ -->
+<!--  14. FILE AND FOLDER OPERATIONS                                  -->
+<!-- ================================================================ -->
+<section id="sec-fileops">
+<h2>14. Files and Folders</h2>
+<table>
+<thead><tr><th>Operation</th><th>Location</th><th>Details</th></tr></thead>
+<tbody>
+<tr><td><strong>Read</strong> — Model discovery</td><td><code>discoverModelFiles</code> (both copies)</td><td><code>dir(fullfile(folder, '**', '*.slx'))</code> and <code>'*.mdl'</code>.</td></tr>
+<tr><td><strong>Read</strong> — Excel/CSV import</td><td><code>importFromExcel</code></td><td><code>readcell(fullSheetPath)</code>.</td></tr>
+<tr><td><strong>Read</strong> — Source .m files</td><td><code>extractAttributesCore → runExtraction</code></td><td><code>fopen(sourceFile, 'rt')</code>, <code>fgetl</code> line by line.</td></tr>
+<tr><td><strong>Read</strong> — Data file for StorageClass</td><td><code>replaceStorageClass</code></td><td><code>fileread(filePath)</code>.</td></tr>
+<tr><td><strong>Write</strong> — Session log</td><td><code>MBD_Integration</code></td><td><code>diary(logPath)</code> → <code>log.txt</code> in <code>pwd</code>.</td></tr>
+<tr><td><strong>Write</strong> — Generated parent model</td><td><code>buildParentModelCore</code></td><td><code>save_system(targetModel, targetModelFile)</code>.</td></tr>
+<tr><td><strong>Write</strong> — Backup file</td><td><code>buildParentModelCore</code></td><td><code>movefile(targetModelFile, backupFile)</code>.</td></tr>
+<tr><td><strong>Write</strong> — Extracted attributes</td><td><code>extractAttributesCore</code></td><td><code>fopen(outputFile, 'wt')</code>, <code>fprintf</code>.</td></tr>
+<tr><td><strong>Write</strong> — StorageClass modified file</td><td><code>replaceStorageClass</code></td><td><code>fopen(filePath, 'w')</code>, <code>fwrite</code>.</td></tr>
+<tr><td><strong>Write</strong> — StorageClass backup</td><td><code>replaceStorageClass</code></td><td><code>copyfile(filePath, backupPath)</code>.</td></tr>
+<tr><td><strong>Write</strong> — SLDD dictionaries</td><td><code>convert_m_to_sldd</code></td><td><code>Simulink.data.dictionary.create(dictPath)</code>.</td></tr>
+<tr><td><strong>Delete</strong> — Old log file</td><td><code>MBD_Integration</code></td><td><code>delete(logPath)</code>.</td></tr>
+<tr><td><strong>Move</strong> — Stray .slxc cache file</td><td><code>buildParentModelCore</code></td><td><code>movefile(strayCacheFile, ...)</code>.</td></tr>
+<tr><td><strong>Folder traversal</strong></td><td><code>discoverModelFiles</code>, <code>extractAttributesCore</code>, <code>convert_m_to_sldd</code></td><td>All use <code>dir(fullfile(folder, '**', '*.ext'))</code>.</td></tr>
+<tr><td><strong>Writable check</strong></td><td><code>cacheFolderWritable</code></td><td>Writes a probe file <code>MBD_Integration_probe.tmp</code>, then deletes it.</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  15. ERROR HANDLING                                              -->
+<!-- ================================================================ -->
+<section id="sec-errors">
+<h2>15. Error Handling</h2>
+
+<h3>Error Identifiers Used</h3>
+<table>
+<thead><tr><th>ID</th><th>File</th><th>Condition</th></tr></thead>
+<tbody>
+<tr><td><code>buildParentModelCore:InvalidFolder</code></td><td>buildParentModelCore.m</td><td>Models folder does not exist.</td></tr>
+<tr><td><code>buildParentModelCore:NoModelsSelected</code></td><td>buildParentModelCore.m</td><td>No models passed to the function.</td></tr>
+<tr><td><code>buildParentModelCore:NameClash</code></td><td>buildParentModelCore.m</td><td>Output model name matches a child model name.</td></tr>
+<tr><td><code>buildParentModelCore:FileExists</code></td><td>buildParentModelCore.m</td><td>Target file exists and <code>Overwrite</code> is <code>false</code>.</td></tr>
+<tr><td><code>buildParentModelCore:ModelNotFound</code></td><td>buildParentModelCore.m</td><td>A requested model is not in the discovered file map.</td></tr>
+<tr><td><code>extractAttributesCore:InvalidHandle</code></td><td>extractAttributesCore.m</td><td>Subsystem handle is invalid.</td></tr>
+<tr><td><code>extractAttributesCore:NoPorts</code></td><td>extractAttributesCore.m</td><td>No ports found matching the PortChoice.</td></tr>
+<tr><td><code>insertUnitDelayOnBranch:ModelNotLoaded</code></td><td>insertUnitDelayOnBranch.m</td><td>Model not loaded in Simulink.</td></tr>
+<tr><td><code>insertUnitDelayOnBranch:NotConnected</code></td><td>insertUnitDelayOnBranch.m</td><td>Source and destination are not connected.</td></tr>
+<tr><td><code>listModelConnections:ModelNotLoaded</code></td><td>listModelConnections.m</td><td>Model not loaded.</td></tr>
+<tr><td><code>configureSubsystemSignals:NoOpenModel</code></td><td>configureSubsystemSignals.m</td><td>No model is open.</td></tr>
+<tr><td><code>configureSubsystemSignals:NotSubsystem</code></td><td>configureSubsystemSignals.m</td><td>Selected block is not a SubSystem.</td></tr>
+</tbody>
+</table>
+
+<h3>try/catch Patterns</h3>
+<p>Throughout <code>MBD_Integration.m</code>, every callback that calls a core engine wraps the call in <code>try/catch</code>. On catch, the error message is formatted via <code>errorDetails(err)</code> — which strips HTML anchor tags and chains cause messages — and displayed to the user via <code>notify(app, errText, title, 'error')</code> (which calls <code>uialert</code>). The error is also logged to the tab's text area and to the command window (and therefore to <code>log.txt</code>).</p>
+
+<p>The <code>buildParentModelCore</code> function has a top-level <code>try/catch</code> around the entire build section. On failure, it closes the partially created model, restores the backup file if one was created, closes models it loaded, and rethrows the error.</p>
+</section>
+
+<!-- ================================================================ -->
+<!--  16. CONFIGURATION                                               -->
+<!-- ================================================================ -->
+<section id="sec-config">
+<h2>16. Configuration</h2>
+
+<h3>Hardcoded Configuration Values</h3>
+<table>
+<thead><tr><th>Value</th><th>Location</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>spacingPoints() = 100</code></td><td>MBD_Integration.m</td><td>Base spacing value in pixels for block layout.</td></tr>
+<tr><td><code>FromModelGap = 100</code></td><td>MBD_Integration.m → <code>spacingGaps()</code></td><td>Gap between a From block and its target model block.</td></tr>
+<tr><td><code>ModelGotoGap = 100</code></td><td>MBD_Integration.m → <code>spacingGaps()</code></td><td>Gap between a model block and its output Goto block.</td></tr>
+<tr><td><code>FromToDelayGap = 40</code></td><td>MBD_Integration.m → <code>spacingGaps()</code></td><td>Gap between a From block and a UnitDelay block.</td></tr>
+<tr><td><code>ModelToModelGap = 400</code></td><td>MBD_Integration.m → <code>spacingGaps()</code></td><td>Total horizontal gap between consecutive model blocks.</td></tr>
+<tr><td><code>modelWidth = 260</code></td><td>buildParentModelCore.m</td><td>Width of each Model Reference block in pixels.</td></tr>
+<tr><td><code>uniformModelH = max(140, ...)</code></td><td>buildParentModelCore.m</td><td>Height of each Model Reference block.</td></tr>
+<tr><td><code>modelBaseY = 200</code></td><td>buildParentModelCore.m</td><td>Starting Y-coordinate for model blocks.</td></tr>
+<tr><td>24-entry color palette</td><td>buildParentModelCore.m → <code>paletteColor()</code></td><td>Pastel background colors for blocks.</td></tr>
+<tr><td><code>globalInportColor = '[0.65,0.90,0.65]'</code></td><td>buildParentModelCore.m</td><td>Background color for root Inport blocks.</td></tr>
+<tr><td><code>globalOutportColor = '[0.95,0.70,0.45]'</code></td><td>buildParentModelCore.m</td><td>Background color for root Outport blocks.</td></tr>
+<tr><td><code>FixedStep fallback = '0.001'</code></td><td>buildParentModelCore.m</td><td>Used when no child models have detectable step sizes.</td></tr>
+<tr><td>Log buffer max = 500 lines</td><td>MBD_Integration.m → <code>logTo</code> / <code>logMany</code></td><td>Text areas are trimmed to the last 500 lines.</td></tr>
+<tr><td>Delay expansion depth limit = 8</td><td>listModelConnections.m → <code>expandThroughDelays</code></td><td>Maximum recursive traversal depth through chained UnitDelay blocks.</td></tr>
+<tr><td>Collision shift limit = 10 attempts</td><td>insertUnitDelayOnBranch.m</td><td>Maximum downward shifts when placing a delay block.</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  17. USER INTERFACE                                              -->
+<!-- ================================================================ -->
+<section id="sec-ui">
+<h2>17. User Interface</h2>
+
+<p>The application creates a single <code>uifigure</code> window titled <code>'SRM MODEL INTEGRATION TOOL'</code>, sized 1020 &times; 700 pixels, centered on screen.</p>
+
+<h3>Top-Level Layout</h3>
+<p>A <code>uigridlayout</code> with 3 rows and 2 columns:</p>
+<ul>
+<li>Row 1: Header (logo image + title label in left column, Clear All button in right column).</li>
+<li>Row 2: <code>uitabgroup</code> with three tabs (left column only).</li>
+<li>Row 3: Status label (left column).</li>
+</ul>
+
+<h3>Tab 1: Build Parent Model</h3>
+<p>13-row, 6-column grid. Key controls:</p>
+<table>
+<thead><tr><th>Control</th><th>Type</th><th>Variable Name</th></tr></thead>
+<tbody>
+<tr><td>Source folder</td><td><code>uieditfield</code></td><td><code>modelsFolderEdit</code></td></tr>
+<tr><td>Browse button</td><td><code>uibutton</code></td><td><code>browseModelsBtn</code></td></tr>
+<tr><td>Quick Search</td><td><code>uieditfield</code></td><td><code>filterEdit</code></td></tr>
+<tr><td>Available models</td><td><code>uilistbox</code> (multi-select)</td><td><code>availableList</code></td></tr>
+<tr><td>Selected models</td><td><code>uilistbox</code> (multi-select)</td><td><code>selectedList</code></td></tr>
+<tr><td>Add/Remove/Up/Down/Clear/Excel buttons</td><td><code>uibutton</code></td><td>Various</td></tr>
+<tr><td>Output Model Name</td><td><code>uieditfield</code></td><td><code>nameEdit</code></td></tr>
+<tr><td>Destination Folder</td><td><code>uieditfield</code></td><td><code>saveFolderEdit</code></td></tr>
+<tr><td>Wrap, Color, AutoDelay, ForceInherited checkboxes</td><td><code>uicheckbox</code></td><td><code>chkWrap</code>, <code>chkColor</code>, <code>chkAutoDelay</code>, <code>chkForceInherited</code></td></tr>
+<tr><td>Connection Type</td><td><code>uidropdown</code></td><td><code>connMethodDrop</code></td></tr>
+<tr><td>Arrangement</td><td><code>uidropdown</code></td><td><code>layoutDrop</code></td></tr>
+<tr><td>Preview / Generate buttons</td><td><code>uibutton</code></td><td><code>previewBtn</code>, <code>generateBtn</code></td></tr>
+<tr><td>Configure Signals button</td><td><code>uibutton</code></td><td><code>configureSignalsBtn</code></td></tr>
+<tr><td>Inports/Outports/Propagation/Resolver checkboxes</td><td><code>uicheckbox</code></td><td><code>chkCfgInports</code>, <code>chkCfgOutports</code>, <code>chkCfgPropagation</code>, <code>chkCfgResolver</code></td></tr>
+<tr><td>Log area</td><td><code>uitextarea</code></td><td><code>log1</code></td></tr>
+</tbody>
+</table>
+
+<h3>Tab 2: Unit Delays</h3>
+<p>7-row, 6-column grid. Key controls:</p>
+<table>
+<thead><tr><th>Control</th><th>Type</th><th>Variable Name</th></tr></thead>
+<tbody>
+<tr><td>Model name</td><td><code>uieditfield</code></td><td><code>connModelEdit</code></td></tr>
+<tr><td>Refresh list button</td><td><code>uibutton</code></td><td><code>refreshConnBtn</code></td></tr>
+<tr><td>Connection picker</td><td><code>uidropdown</code></td><td><code>connDropDown</code></td></tr>
+<tr><td>Insert Unit Delay button</td><td><code>uibutton</code></td><td><code>insertDelayBtn</code></td></tr>
+<tr><td>Filter checkboxes</td><td><code>uicheckbox</code></td><td><code>chkDelayFilter</code>, <code>chkShowAll</code></td></tr>
+<tr><td>Details table</td><td><code>uitable</code></td><td><code>connDetailsTable</code></td></tr>
+<tr><td>Log area</td><td><code>uitextarea</code></td><td><code>log3</code></td></tr>
+</tbody>
+</table>
+
+<h3>Tab 3: Extract Attributes</h3>
+<p>13-row, 6-column grid. Key controls:</p>
+<table>
+<thead><tr><th>Control</th><th>Type</th><th>Variable Name</th></tr></thead>
+<tbody>
+<tr><td>Subsystem label</td><td><code>uilabel</code></td><td><code>subsystemLabel</code></td></tr>
+<tr><td>Refresh button</td><td><code>uibutton</code></td><td><code>refreshSubBtn</code></td></tr>
+<tr><td>Port choice</td><td><code>uidropdown</code></td><td><code>portDropDown</code></td></tr>
+<tr><td>File info</td><td><code>uidropdown</code></td><td><code>infoDropDown</code></td></tr>
+<tr><td>Source folder</td><td><code>uieditfield</code></td><td><code>searchEdit</code></td></tr>
+<tr><td>Destination file</td><td><code>uieditfield</code></td><td><code>destEdit</code></td></tr>
+<tr><td>Extract / Open Output / Open Folder buttons</td><td><code>uibutton</code></td><td><code>extractBtn</code>, <code>openOutputBtn</code>, <code>openFolderBtn</code></td></tr>
+<tr><td>Tags listbox</td><td><code>uilistbox</code></td><td><code>tagsList</code></td></tr>
+<tr><td>StorageClass dropdown</td><td><code>uidropdown</code></td><td><code>storageClassDropDown</code></td></tr>
+<tr><td>Apply StorageClass button</td><td><code>uibutton</code></td><td><code>applyStorageClassBtn</code></td></tr>
+<tr><td>Diagnostic audit toggle</td><td><code>uiswitch</code> (toggle)</td><td><code>diagnosticSwitch</code></td></tr>
+<tr><td>Preview SLDD / Generate SLDD buttons</td><td><code>uibutton</code></td><td><code>previewSlddBtn</code>, <code>generateSlddBtn</code></td></tr>
+<tr><td>Log area</td><td><code>uitextarea</code></td><td><code>log2</code></td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  19. ARCHITECTURE                                                -->
+<!-- ================================================================ -->
+<section id="sec-arch">
+<h2>19. Architecture</h2>
+<p>The application has no formal layered architecture. Based on the source code, the following components exist:</p>
+<ul>
+<li><strong>GUI Layer:</strong> <code>MBD_Integration.m</code> — creates the window and handles all user events via nested callback functions.</li>
+<li><strong>Validation Engine:</strong> <code>validateModelCompatibility.m</code> — performs compatibility checks.</li>
+<li><strong>Diagram Construction Engine:</strong> <code>buildParentModelCore.m</code> — builds the parent model.</li>
+<li><strong>Connection Analysis Engine:</strong> <code>listModelConnections.m</code> — traces signal connections.</li>
+<li><strong>Delay Injection Engine:</strong> <code>insertUnitDelayOnBranch.m</code> — inserts Unit Delay blocks.</li>
+<li><strong>Signal Configuration Engine:</strong> <code>configureSubsystemSignals.m</code> — configures port signals.</li>
+<li><strong>Attribute Extraction Engine:</strong> <code>extractAttributesCore.m</code> — scans .m files for attributes.</li>
+<li><strong>Dictionary Conversion Engine:</strong> <code>convert_m_to_sldd</code> — creates .sldd files.</li>
+<li><strong>StorageClass Editor:</strong> <code>replaceStorageClass</code> — regex-based text replacement.</li>
+</ul>
+<p>All engine functions are called by the GUI layer. No engine function calls another engine function.</p>
+
+<div class="diagram-container">
+<img src="architecture.svg" alt="Verified application architecture diagram">
+<div class="diagram-caption">Architecture diagram — generated from verified source code relationships.</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!--  20–23. DIAGRAMS                                                 -->
+<!-- ================================================================ -->
+<section id="sec-diagrams">
+<h2>20–23. Diagrams</h2>
+
+<div class="diagram-container">
+<img src="call_graph.svg" alt="Function call graph">
+<div class="diagram-caption">Call graph — showing verified function-to-function calls from the GUI layer to engine functions.</div>
+</div>
+
+<div class="diagram-container">
+<img src="data_flow.svg" alt="Data flow diagram">
+<div class="diagram-caption">Data flow diagram — showing verified data movement through the three processing pipelines.</div>
+</div>
+
+<div class="diagram-container">
+<img src="sequence.svg" alt="Sequence diagram">
+<div class="diagram-caption">Sequence diagram — showing the verified execution order for the Build Parent Model workflow (Preview + Generate).</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!--  24. SCREENSHOTS                                                 -->
+<!-- ================================================================ -->
+<section id="sec-screenshots">
+<h2>24. Screenshots</h2>
+
+<div class="img-placeholder">
+<div class="icon">&#128247;</div>
+<h4>Screenshot Required: Application Startup Window</h4>
+<p>Insert a screenshot of the main window after running <code>MBD_Integration</code>. The source code creates a <code>uifigure</code> titled <code>'SRM MODEL INTEGRATION TOOL'</code> sized 1020&times;700.</p>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>app = uifigure(...)</code></div>
+</div>
+
+<div class="img-placeholder">
+<div class="icon">&#128247;</div>
+<h4>Screenshot Required: Tab 1 — Build Parent Model</h4>
+<p>Insert a screenshot showing Tab 1 with models loaded in the Available and Selected lists, and the Preview log populated.</p>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>tab1</code> grid layout</div>
+</div>
+
+<div class="img-placeholder">
+<div class="icon">&#128247;</div>
+<h4>Screenshot Required: Tab 2 — Unit Delays</h4>
+<p>Insert a screenshot showing Tab 2 with the connections table populated after clicking Refresh list.</p>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>tab3</code> (variable named <code>tab3</code> for the Unit Delays tab)</div>
+</div>
+
+<div class="img-placeholder">
+<div class="icon">&#128247;</div>
+<h4>Screenshot Required: Tab 3 — Extract Attributes</h4>
+<p>Insert a screenshot showing Tab 3 with a subsystem selected and tags populated in the listbox.</p>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>tab2</code> (variable named <code>tab2</code> for the Extract Attributes tab)</div>
+</div>
+
+<div class="img-placeholder">
+<div class="icon">&#128247;</div>
+<h4>Screenshot Required: First-Time Tutorial Dialog</h4>
+<p>Insert a screenshot of the <code>uiconfirm</code> dialog displayed on first launch. The source code creates 7 steps in <code>showQuickTutorial()</code>.</p>
+<div class="src-ref">Source: <code>MBD_Integration.m</code> &rarr; <code>showQuickTutorial()</code></div>
+</div>
+
+<div class="img-placeholder">
+<div class="icon">&#128247;</div>
+<h4>Screenshot Required: Generated Parent Model in Simulink</h4>
+<p>Insert a screenshot of a generated parent model opened in Simulink, showing Model Reference blocks connected via From/Goto tags.</p>
+<div class="src-ref">Source: <code>buildParentModelCore.m</code> &rarr; From/Goto block placement section</div>
+</div>
+
+<div class="callout callout-warn">
+<strong>Note on tab variable names:</strong> In the source code, the Unit Delays tab uses the variable <code>tab3</code> and the Extract Attributes tab uses <code>tab2</code>. This naming does not match the visual tab order (Unit Delays is the second visible tab, Extract Attributes is the third). This is a naming discrepancy in the source code.
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!--  25. SIMPLE EXPLANATION                                          -->
+<!-- ================================================================ -->
+<section id="sec-simple">
+<h2>25. How This Application Works — Simple Explanation</h2>
+
+<p>Imagine you have 20 small Simulink models, and you need to connect them all together into one big model. Doing this by hand would take a long time — you would need to drag each model into a new diagram, figure out which outputs go to which inputs by matching their names, draw all the wires, and deal with timing problems.</p>
+
+<p>This tool does all of that for you. Here is what happens:</p>
+
+<ol>
+<li><strong>You point the tool at a folder.</strong> The tool looks inside that folder (and all its subfolders) for Simulink model files. It makes a list of everything it finds.</li>
+
+<li><strong>You pick which models to include and put them in order.</strong> You can do this by clicking in the list, or by uploading an Excel file that already has the list in Column A.</li>
+
+<li><strong>You click Preview.</strong> The tool opens each model, reads its input and output port names, and checks if their timing settings are compatible. It builds a plan showing which outputs connect to which inputs (by matching names). It also finds connections that go "backward" — where a later model feeds back into an earlier one.</li>
+
+<li><strong>You click Generate.</strong> The tool creates a brand-new Simulink model. For each of your child models, it places a special block called a Model Reference that points to the original file. Then it connects them:
+<ul>
+<li>If you chose "From/Goto blocks", it uses invisible wireless-style connections. Each output gets a <code>Goto</code> tag, and each matching input gets a <code>From</code> tag with the same name.</li>
+<li>If you chose "Direct lines", it draws physical wires.</li>
+</ul>
+For backward connections, it can automatically insert a <code>Unit Delay</code> block — a one-step time buffer that prevents the solver from getting stuck in a loop.</li>
+
+<li><strong>You can fix remaining loops.</strong> On the second tab, the tool shows you a list of all backward connections in the model. You can pick one and click a button to insert a Unit Delay block on it.</li>
+
+<li><strong>You can extract variable settings.</strong> On the third tab, you click on a subsystem in your model, and the tool reads its port names. Then it searches through a folder of MATLAB code files looking for lines that set properties of variables with those names. It collects all the matches and writes them into a new file. You can also convert that file into a Simulink Data Dictionary, which is a special file Simulink uses to store variable definitions permanently.</li>
+</ol>
+
+<p>The tool saves a log of everything it does to a file called <code>log.txt</code>. Before overwriting any file, it makes a backup copy with a <code>.bak</code> extension.</p>
+</section>
+
+<!-- ================================================================ -->
+<!--  26. TECHNICAL REFERENCE                                         -->
+<!-- ================================================================ -->
+<section id="sec-techref">
+<h2>26. Technical Reference</h2>
+
+<h3>Source File List</h3>
+<table>
+<thead><tr><th>#</th><th>File</th><th>Type</th><th>Lines of Code (approx.)</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>MBD_Integration.m</code></td><td>Function (with nested functions and local helpers)</td><td>~1300</td></tr>
+<tr><td>2</td><td><code>buildParentModelCore.m</code></td><td>Function (with local helpers)</td><td>~700</td></tr>
+<tr><td>3</td><td><code>validateModelCompatibility.m</code></td><td>Function (with local helpers)</td><td>~200</td></tr>
+<tr><td>4</td><td><code>extractAttributesCore.m</code></td><td>Function (with local helpers); also contains <code>convert_m_to_sldd</code> and <code>replaceStorageClass</code></td><td>~700 (combined)</td></tr>
+<tr><td>5</td><td><code>listModelConnections.m</code></td><td>Function (with local helpers)</td><td>~350</td></tr>
+<tr><td>6</td><td><code>insertUnitDelayOnBranch.m</code></td><td>Function (with local helpers)</td><td>~180</td></tr>
+<tr><td>7</td><td><code>configureSubsystemSignals.m</code></td><td>Function (with local helpers)</td><td>~250</td></tr>
+</tbody >
+</table>
+
+<h3>External Resource Dependencies</h3>
+<table>
+<thead><tr><th>Resource</th><th>Type</th><th>Required By</th></tr></thead>
+<tbody>
+<tr><td>Simulink (base toolbox)</td><td>MATLAB Toolbox</td><td>All engine files</td></tr>
+<tr><td><code>logo.png</code></td><td>Image file (optional)</td><td><code>MBD_Integration.m</code> header</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ================================================================ -->
+<!--  UNKNOWN INFORMATION                                             -->
+<!-- ================================================================ -->
+<section id="sec-unknown">
+<h2>Information Not Available in Source Code</h2>
+
+<ul>
+<li>The file <code>logo.png</code> is referenced but not provided. Its content is unknown.</li>
+<li>The exact appearance of the GUI cannot be confirmed without running the code. All UI layout descriptions are based on the <code>uigridlayout</code> row/column assignments in the source code.</li>
+<li>No MATLAB classes are defined in the provided source code. Section 7 (Class Architecture) is therefore not applicable.</li>
+<li>No hardware or communication protocols are used by the provided source code. Section 18 (Hardware/Communication) is therefore not applicable.</li>
+<li>The naming of tab variables is inconsistent with the visual tab order: <code>tab1</code> = "Build Parent Model", <code>tab3</code> = "Unit Delays" (second visual tab), <code>tab2</code> = "Extract Attributes" (third visual tab). The source code does not explain this discrepancy.</li>
+<li>The variable <code>caseInsensitive</code> in <code>MBD_Integration.m</code> is set to <code>true</code> and never changed by any UI control. The commented-out checkbox <code>chkCase2</code> suggests this was once user-configurable.</li>
+</ul>
+</section>
+
+<!-- ================================================================ -->
+<!--  TROUBLESHOOTING                                                 -->
+<!-- ================================================================ -->
+<section id="sec-troubleshoot">
+<h2>Troubleshooting Reference</h2>
+
+<table>
+<thead><tr><th>Error / Symptom</th><th>Cause (from source code)</th><th>Solution</th></tr></thead>
+<tbody>
+<tr>
+<td><code>"That models folder does not exist."</code></td>
+<td><code>onModelsFolderChanged</code> checks <code>isfolder(candidate)</code> and sets status if false.</td>
+<td>Enter or browse to a valid directory path.</td>
+</tr>
+<tr>
+<td><code>"Referenced model 'X' was not found."</code></td>
+<td><code>buildParentModelCore</code> could not find the model name in the discovered file map.</td>
+<td>Verify the model file exists in the source folder. Check for naming mismatches.</td>
+</tr>
+<tr>
+<td><code>"The generated model name must differ from the referenced-model names."</code></td>
+<td><code>buildParentModelCore</code> compares <code>targetModel</code> against <code>selectedModels</code> (case-insensitive).</td>
+<td>Choose a different output model name.</td>
+</tr>
+<tr>
+<td><code>"No Simulink block is selected."</code></td>
+<td><code>getSubsystemPorts</code> receives an empty or invalid handle from <code>gcbh</code>.</td>
+<td>Click a Subsystem block in an open Simulink model before pressing Refresh.</td>
+</tr>
+<tr>
+<td><code>"The selected block is not a subsystem."</code></td>
+<td><code>getSubsystemPorts</code> checks <code>get_param(handle, 'BlockType')</code> against <code>'SubSystem'</code>.</td>
+<td>Select a Subsystem block specifically, not a Gain, Constant, or other block type.</td>
+</tr>
+<tr>
+<td>Preview passes but Generate fails with sample-time errors</td>
+<td>Preview uses a read-only check. Generate creates the actual model, which may expose issues the read-only check cannot detect.</td>
+<td>Enable the <strong>Reset All Sample Time To -1</strong> checkbox and re-run Preview + Generate.</td>
+</tr>
+<tr>
+<td><code>"Model 'X' is not open in Simulink."</code></td>
+<td><code>refreshConnections</code> checks <code>bdIsLoaded(modelName)</code>.</td>
+<td>Open the model in Simulink first, then click Refresh list.</td>
+</tr>
+<tr>
+<td>StorageClass update reports no changes</td>
+<td><code>replaceStorageClass</code> regex did not find any <code>.StorageClass = '...'</code> patterns in the file.</td>
+<td>Verify the file contains <code>.StorageClass</code> assignments. The regex only matches <code>Auto</code>, <code>ExportedGlobal</code>, or <code>ImportedExtern</code> as existing values.</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+</main>
+
+<!-- ================================================================ -->
+<!--  JAVASCRIPT                                                      -->
+<!-- ================================================================ -->
+<script>
+function toggleC(hdr){hdr.parentElement.classList.toggle('open')}
+
+function copyCode(btn){
+  const code=btn.previousElementSibling||btn.closest('pre').querySelector('code');
+  const text=code?code.textContent:btn.closest('pre').textContent;
+  navigator.clipboard.writeText(text).then(()=>{
+    btn.textContent='Copied!';btn.style.background='#059669';
+    setTimeout(()=>{btn.textContent='Copy';btn.style.background='#334155'},1200);
+  }).catch(()=>{});
+}
+
+// Sidebar search
+document.getElementById('sidebarSearch').addEventListener('input',function(e){
+  const q=e.target.value.toLowerCase().trim();
+  document.querySelectorAll('.nav-link').forEach(a=>{
+    a.style.display=(!q||a.textContent.toLowerCase().includes(q))?'block':'none';
+  });
+  document.querySelectorAll('.nav-group').forEach(g=>{g.style.display=q?'none':'block'});
+});
+
+// Active nav tracking
+const observer=new IntersectionObserver(entries=>{
+  entries.forEach(entry=>{
+    if(entry.isIntersecting){
+      const id=entry.target.id;if(!id)return;
+      document.querySelectorAll('.nav-link').forEach(n=>n.classList.remove('active'));
+      const a=document.querySelector('.nav-link[href="#'+id+'"]');
+      if(a)a.classList.add('active');
+    }
+  });
+},{threshold:0.15,rootMargin:'-60px 0px -60% 0px'});
+document.querySelectorAll('section,article').forEach(s=>{if(s.id)observer.observe(s)});
+</script>
+
+</body>
+</html>

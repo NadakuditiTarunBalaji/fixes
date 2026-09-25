@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 680" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="11">
+  <defs>
+    <marker id="sa" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><path d="M0,0 L7,2.5 L0,5" fill="#475569"/></marker>
+    <marker id="sb" markerWidth="7" markerHeight="5" refX="0" refY="2.5" orient="auto"><path d="M7,0 L0,2.5 L7,5" fill="#475569"/></marker>
+    <style>
+      .actor{fill:#1E3A5F;rx:4;ry:4}
+      .actor-lbl{fill:#fff;font-weight:700;font-size:11px}
+      .life{stroke:#CBD5E1;stroke-width:1;stroke-dasharray:4,3}
+      .msg{stroke:#475569;stroke-width:1.2;marker-end:url(#sa)}
+      .ret{stroke:#94A3B8;stroke-width:1;stroke-dasharray:3,2;marker-end:url(#sb)}
+      .mlbl{fill:#334155;font-size:10.5px}
+      .note{fill:#FFFBEB;stroke:#FCD34D;rx:3;ry:3}
+      .nlbl{fill:#92400E;font-size:10px}
+    </style>
+  </defs>
+
+  <!-- Actors -->
+  <rect class="actor" x="40" y="10" width="80" height="28"/><text class="actor-lbl" x="80" y="29" text-anchor="middle">User</text>
+  <rect class="actor" x="200" y="10" width="110" height="28"/><text class="actor-lbl" x="255" y="29" text-anchor="middle">MBD_Integration</text>
+  <rect class="actor" x="390" y="10" width="140" height="28"/><text class="actor-lbl" x="460" y="29" text-anchor="middle">validateModelCompat.</text>
+  <rect class="actor" x="610" y="10" width="150" height="28"/><text class="actor-lbl" x="685" y="29" text-anchor="middle">buildParentModelCore</text>
+
+  <!-- Lifelines -->
+  <line class="life" x1="80" y1="38" x2="80" y2="660"/>
+  <line class="life" x1="255" y1="38" x2="255" y2="660"/>
+  <line class="life" x1="460" y1="38" x2="460" y2="660"/>
+  <line class="life" x1="685" y1="38" x2="685" y2="660"/>
+
+  <!-- 1. Browse Folder -->
+  <line class="msg" x1="80" y1="70" x2="255" y2="70"/>
+  <text class="mlbl" x="140" y="65">clicks Browse</text>
+  <line class="msg" x1="255" y1="90" x2="255" y2="90"/>
+  <text class="mlbl" x="260" y="85" style="font-style:italic">refreshModelList()</text>
+
+  <!-- 2. Add Models -->
+  <line class="msg" x1="80" y1="120" x2="255" y2="120"/>
+  <text class="mlbl" x="110" y="115">adds models to list</text>
+
+  <!-- 3. Preview -->
+  <line class="msg" x1="80" y1="160" x2="255" y2="160"/>
+  <text class="mlbl" x="120" y="155">clicks Preview</text>
+
+  <line class="msg" x1="255" y1="190" x2="460" y2="190"/>
+  <text class="mlbl" x="310" y="185">validateModelCompatibility()</text>
+
+  <rect class="note" x="470" y="200" width="170" height="50"/>
+  <text class="nlbl" x="480" y="216">1. Load child models</text>
+  <text class="nlbl" x="480" y="230">2. Static sample-time check</text>
+  <text class="nlbl" x="480" y="244">3. Compile temp parent</text>
+
+  <line class="ret" x1="460" y1="270" x2="255" y2="270"/>
+  <text class="mlbl" x="310" y="265" style="fill:#94A3B8">report struct</text>
+
+  <line class="msg" x1="255" y1="300" x2="685" y2="300"/>
+  <text class="mlbl" x="400" y="295">buildParentModelCore(PreviewOnly=true)</text>
+
+  <rect class="note" x="695" y="310" width="110" height="35"/>
+  <text class="nlbl" x="705" y="326">Plan connections</text>
+  <text class="nlbl" x="705" y="340">Return plan struct</text>
+
+  <line class="ret" x1="685" y1="360" x2="255" y2="360"/>
+  <text class="mlbl" x="400" y="355" style="fill:#94A3B8">result (plan)</text>
+
+  <line class="ret" x1="255" y1="380" x2="80" y2="380"/>
+  <text class="mlbl" x="120" y="375" style="fill:#94A3B8">log + enable Generate</text>
+
+  <!-- 4. Generate -->
+  <line class="msg" x1="80" y1="420" x2="255" y2="420"/>
+  <text class="mlbl" x="115" y="415">clicks Generate</text>
+
+  <line class="msg" x1="255" y1="450" x2="685" y2="450"/>
+  <text class="mlbl" x="400" y="445">buildParentModelCore(PreviewOnly=false)</text>
+
+  <rect class="note" x="695" y="460" width="115" height="80"/>
+  <text class="nlbl" x="705" y="476">1. Create new_system</text>
+  <text class="nlbl" x="705" y="490">2. Add Model blocks</text>
+  <text class="nlbl" x="705" y="504">3. Wire connections</text>
+  <text class="nlbl" x="705" y="518">4. Wrap subsystem</text>
+  <text class="nlbl" x="705" y="532">5. save_system</text>
+
+  <line class="ret" x1="685" y1="555" x2="255" y2="555"/>
+  <text class="mlbl" x="400" y="550" style="fill:#94A3B8">result (success)</text>
+
+  <line class="msg" x1="255" y1="575" x2="255" y2="575"/>
+  <text class="mlbl" x="260" y="570" style="font-style:italic">refreshConnections()</text>
+
+  <line class="ret" x1="255" y1="600" x2="80" y2="600"/>
+  <text class="mlbl" x="110" y="595" style="fill:#94A3B8">log + model opened</text>
+</svg>
